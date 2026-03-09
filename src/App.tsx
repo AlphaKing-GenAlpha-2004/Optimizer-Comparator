@@ -35,6 +35,8 @@ export default function App() {
   const [isTraining, setIsTraining] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [selectedExperiment, setSelectedExperiment] = useState<any>(null);
+  const [isViewingReport, setIsViewingReport] = useState(false);
   const isPausedRef = useRef(false);
   const stopTrainingRef = useRef(false);
 
@@ -247,9 +249,14 @@ export default function App() {
           dataset_name: trainFile.name,
           sample_size: sampleSize,
           optimizer: opt,
+          hidden_size: params.hiddenSize,
+          learning_rate: params.learningRate,
+          epochs: params.epochs,
+          batch_size: params.batchSize,
           test_accuracy: testAccuracy,
           convergence_rate: result.convergenceRate,
-          execution_time: executionTime
+          execution_time: executionTime,
+          logs: metrics
         })
       });
     }
@@ -268,6 +275,20 @@ export default function App() {
       return score(curr) > score(prev) ? curr : prev;
     });
   }, [results]);
+
+  const fetchExperimentDetails = async (id: number) => {
+    try {
+      const res = await fetch(`/api/experiments/${id}`);
+      const data = await res.json();
+      if (typeof data.logs === 'string') {
+        data.logs = JSON.parse(data.logs);
+      }
+      setSelectedExperiment(data);
+      setIsViewingReport(true);
+    } catch (e) {
+      console.error('Failed to fetch experiment details', e);
+    }
+  };
 
   const chartData = useMemo(() => {
     if (results.length === 0) return [];
@@ -741,14 +762,18 @@ export default function App() {
               <div className="text-center py-12 text-[#A8A29E] italic text-sm">No experiments recorded yet.</div>
             ) : (
               history.map((exp) => (
-                <div key={exp.id} className="flex items-center justify-between p-4 bg-[#F5F5F4] rounded-xl hover:bg-[#E7E5E4] transition-colors">
+                <div 
+                  key={exp.id} 
+                  onClick={() => fetchExperimentDetails(exp.id)}
+                  className="flex items-center justify-between p-4 bg-[#F5F5F4] rounded-xl hover:bg-[#E7E5E4] transition-colors cursor-pointer group"
+                >
                   <div className="flex items-center gap-4">
-                    <div className="bg-white p-2 rounded-lg shadow-sm">
-                      <Database className="w-4 h-4 text-[#1C1917]" />
+                    <div className="bg-white p-2 rounded-lg shadow-sm group-hover:bg-[#1C1917] group-hover:text-white transition-colors">
+                      <Database className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="font-bold text-sm">{exp.dataset_name}</div>
-                      <div className="text-[10px] text-[#78716C] uppercase tracking-wider">{exp.optimizer} • {new Date(exp.timestamp).toLocaleDateString()}</div>
+                      <div className="text-[10px] text-[#78716C] uppercase tracking-wider">{exp.optimizer} • {new Date(exp.timestamp).toLocaleString()}</div>
                     </div>
                   </div>
                   <div className="flex gap-8 text-right">
@@ -766,6 +791,141 @@ export default function App() {
             )}
           </div>
         </section>
+
+        {/* Experiment Report Modal */}
+        {isViewingReport && selectedExperiment && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-8">
+            <div className="bg-white w-full max-w-6xl max-height-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-[#E7E5E4] flex justify-between items-center bg-[#F5F5F4]">
+                <div>
+                  <h2 className="text-2xl font-black tracking-tight">Experiment Report #{selectedExperiment.id}</h2>
+                  <p className="text-sm text-[#78716C]">{selectedExperiment.dataset_name} • {selectedExperiment.optimizer} • {new Date(selectedExperiment.timestamp).toLocaleString()}</p>
+                </div>
+                <button 
+                  onClick={() => setIsViewingReport(false)}
+                  className="p-2 hover:bg-white rounded-full transition-colors"
+                >
+                  <AlertCircle className="w-6 h-6 rotate-45" />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                {/* Overview */}
+                <div className="grid grid-cols-4 gap-6">
+                  <div className="p-4 bg-[#F5F5F4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Hidden Size</div>
+                    <div className="text-xl font-black">{selectedExperiment.hidden_size}</div>
+                  </div>
+                  <div className="p-4 bg-[#F5F5F4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Learning Rate</div>
+                    <div className="text-xl font-black">{selectedExperiment.learning_rate}</div>
+                  </div>
+                  <div className="p-4 bg-[#F5F5F4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Epochs</div>
+                    <div className="text-xl font-black">{selectedExperiment.epochs}</div>
+                  </div>
+                  <div className="p-4 bg-[#F5F5F4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Batch Size</div>
+                    <div className="text-xl font-black">{selectedExperiment.batch_size}</div>
+                  </div>
+                </div>
+
+                {/* Analysis */}
+                <section className="bg-emerald-50 border border-emerald-100 p-6 rounded-2xl">
+                  <h3 className="font-bold text-emerald-900 mb-2 flex items-center gap-2">
+                    <Info className="w-4 h-4" /> Experiment Analysis
+                  </h3>
+                  <p className="text-sm text-emerald-800 leading-relaxed">
+                    This experiment using <span className="font-bold">{selectedExperiment.optimizer}</span> on the <span className="font-bold">{selectedExperiment.dataset_name}</span> dataset achieved a test accuracy of <span className="font-bold">{(selectedExperiment.test_accuracy * 100).toFixed(2)}%</span>. 
+                    The model converged with a rate of <span className="font-bold">{selectedExperiment.convergence_rate.toFixed(2)}x</span> over <span className="font-bold">{selectedExperiment.execution_time.toFixed(2)}s</span>.
+                    {selectedExperiment.optimizer === 'Adam' ? " Adam's adaptive learning rate helped in stable convergence." : ""}
+                    {selectedExperiment.test_accuracy > 0.8 ? " The high accuracy suggests well-tuned parameters for this specific data." : " There might be room for improvement by adjusting the learning rate or hidden layer size."}
+                  </p>
+                </section>
+
+                {/* Graphs */}
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm">Loss & Accuracy</h4>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={selectedExperiment.logs}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis dataKey="epoch" tick={{fontSize: 10}} />
+                          <YAxis yAxisId="left" tick={{fontSize: 10}} />
+                          <YAxis yAxisId="right" orientation="right" tick={{fontSize: 10}} domain={[0, 1]} />
+                          <Tooltip />
+                          <Line yAxisId="left" type="monotone" dataKey="loss" stroke="#1C1917" strokeWidth={2} dot={false} name="Loss" />
+                          <Line yAxisId="right" type="monotone" dataKey="accuracy" stroke="#059669" strokeWidth={2} dot={false} name="Accuracy" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm">Gradients & Updates</h4>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={selectedExperiment.logs}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis dataKey="epoch" tick={{fontSize: 10}} />
+                          <YAxis tick={{fontSize: 10}} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="gradientNorm" stroke="#D97706" strokeWidth={2} dot={false} name="Grad Norm" />
+                          <Line type="monotone" dataKey="updateRatio" stroke="#2563EB" strokeWidth={2} dot={false} name="Update Ratio" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Epoch Table */}
+                <section>
+                  <h3 className="font-bold mb-4">Epoch Details</h3>
+                  <div className="overflow-x-auto border border-[#E7E5E4] rounded-xl">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-[#F5F5F4] text-[#78716C] uppercase text-[10px] tracking-wider">
+                        <tr>
+                          <th className="px-6 py-3 font-semibold">Epoch</th>
+                          <th className="px-6 py-3 font-semibold">Loss</th>
+                          <th className="px-6 py-3 font-semibold">Accuracy</th>
+                          <th className="px-6 py-3 font-semibold">Grad Norm</th>
+                          <th className="px-6 py-3 font-semibold">Update Ratio</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E7E5E4]">
+                        {selectedExperiment.logs.map((m: any) => (
+                          <tr key={m.epoch}>
+                            <td className="px-6 py-3 font-bold">{m.epoch}</td>
+                            <td className="px-6 py-3">{m.loss.toFixed(4)}</td>
+                            <td className="px-6 py-3">{(m.accuracy * 100).toFixed(2)}%</td>
+                            <td className="px-6 py-3">{m.gradientNorm.toFixed(4)}</td>
+                            <td className="px-6 py-3">{m.updateRatio.toFixed(6)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                {/* Testing Results */}
+                <div className="grid grid-cols-3 gap-6">
+                  <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Test Accuracy</div>
+                    <div className="text-3xl font-black text-emerald-600">{(selectedExperiment.test_accuracy * 100).toFixed(2)}%</div>
+                  </div>
+                  <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Convergence</div>
+                    <div className="text-3xl font-black">{selectedExperiment.convergence_rate.toFixed(2)}x</div>
+                  </div>
+                  <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Execution Time</div>
+                    <div className="text-3xl font-black">{selectedExperiment.execution_time.toFixed(2)}s</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

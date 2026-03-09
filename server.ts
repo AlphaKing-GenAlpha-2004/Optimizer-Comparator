@@ -9,15 +9,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database('experiments.db');
 
 // Initialize Database
+db.exec(`DROP TABLE IF EXISTS experiments`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dataset_name TEXT,
     sample_size INTEGER,
     optimizer TEXT,
+    hidden_size INTEGER,
+    learning_rate REAL,
+    epochs INTEGER,
+    batch_size INTEGER,
     test_accuracy REAL,
     convergence_rate REAL,
     execution_time REAL,
+    logs TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
@@ -31,23 +37,49 @@ async function startServer() {
   // API Routes
   app.get('/api/history', (req, res) => {
     try {
-      const rows = db.prepare('SELECT * FROM experiments ORDER BY timestamp DESC LIMIT 50').all();
+      const rows = db.prepare('SELECT id, dataset_name, optimizer, test_accuracy, execution_time, timestamp FROM experiments ORDER BY timestamp DESC LIMIT 50').all();
       res.json(rows);
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch history' });
     }
   });
 
+  app.get('/api/experiments/:id', (req, res) => {
+    try {
+      const row = db.prepare('SELECT * FROM experiments WHERE id = ?').get(req.params.id);
+      if (!row) {
+        return res.status(404).json({ error: 'Experiment not found' });
+      }
+      res.json(row);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch experiment' });
+    }
+  });
+
   app.post('/api/experiments', (req, res) => {
-    const { dataset_name, sample_size, optimizer, test_accuracy, convergence_rate, execution_time } = req.body;
+    const { 
+      dataset_name, sample_size, optimizer, 
+      hidden_size, learning_rate, epochs, batch_size,
+      test_accuracy, convergence_rate, execution_time, logs 
+    } = req.body;
     try {
       const stmt = db.prepare(`
-        INSERT INTO experiments (dataset_name, sample_size, optimizer, test_accuracy, convergence_rate, execution_time)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO experiments (
+          dataset_name, sample_size, optimizer, 
+          hidden_size, learning_rate, epochs, batch_size,
+          test_accuracy, convergence_rate, execution_time, logs
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      stmt.run(dataset_name, sample_size, optimizer, test_accuracy, convergence_rate, execution_time);
+      stmt.run(
+        dataset_name, sample_size, optimizer, 
+        hidden_size, learning_rate, epochs, batch_size,
+        test_accuracy, convergence_rate, execution_time, 
+        typeof logs === 'string' ? logs : JSON.stringify(logs)
+      );
       res.json({ success: true });
     } catch (error) {
+      console.error(error);
       res.status(500).json({ error: 'Failed to save experiment' });
     }
   });
