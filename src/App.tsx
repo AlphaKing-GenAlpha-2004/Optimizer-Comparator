@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, Cell, ScatterChart, Scatter, ZAxis, AreaChart, Area
 } from 'recharts';
 import { 
-  Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle
+  Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Target
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import { clsx, type ClassValue } from 'clsx';
@@ -24,6 +29,7 @@ export default function App() {
   const [features, setFeatures] = useState<string[]>([]);
   const [target, setTarget] = useState<string>('');
   const [sampleSize, setSampleSize] = useState<number>(10000);
+  const [trainSplit, setTrainSplit] = useState<number>(80);
   
   const [params, setParams] = useState<ModelParams>({
     hiddenSize: 64,
@@ -37,6 +43,11 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [selectedExperiment, setSelectedExperiment] = useState<any>(null);
   const [isViewingReport, setIsViewingReport] = useState(false);
+
+  const safeFixed = (val: any, digits: number = 2, multiplier: number = 1, suffix: string = '') => {
+    if (val === undefined || val === null || isNaN(Number(val))) return 'N/A';
+    return (Number(val) * multiplier).toFixed(digits) + suffix;
+  };
   const isPausedRef = useRef(false);
   const stopTrainingRef = useRef(false);
 
@@ -144,11 +155,16 @@ export default function App() {
     const fullTrain = await loadAndSample(trainFile, sampleSize);
     const fullTest = await loadAndSample(testFile, Math.min(2000, sampleSize));
 
-    // Prepare and Normalize Data once
-    const X_train_raw = fullTrain.map(row => features.map(f => row[f] || 0));
-    const y_train = fullTrain.map(row => row[target]);
-    const X_test_raw = fullTest.map(row => features.map(f => row[f] || 0));
-    const y_test = fullTest.map(row => row[target]);
+    // Prepare data
+    const X_full = fullTrain.map(row => features.map(f => Number(row[f]) || 0));
+    const y_full = fullTrain.map(row => row[target]);
+
+    // Train-Test Split
+    const splitIdx = Math.floor(X_full.length * (trainSplit / 100));
+    const X_train_raw = X_full.slice(0, splitIdx);
+    const y_train = y_full.slice(0, splitIdx);
+    const X_test_raw = X_full.slice(splitIdx);
+    const y_test = y_full.slice(splitIdx);
 
     const normalize = (data: any[][]) => {
       if (data.length === 0) return [];
@@ -161,7 +177,7 @@ export default function App() {
     const X_test_norm = normalize(X_test_raw);
 
     // Unique classes
-    const classes = Array.from(new Set(y_train)).sort();
+    const classes = Array.from(new Set(y_full)).sort();
     const classMap = new Map(classes.map((c, i) => [c, i]));
     const y_train_idx = y_train.map(v => classMap.get(v) || 0);
     const y_test_idx = y_test.map(v => classMap.get(v) || 0);
@@ -208,14 +224,15 @@ export default function App() {
         if (stopTrainingRef.current) break;
 
         const avgLoss = totalLoss / batchCount;
-        const accuracy = nn.evaluate(X_train_norm, y_train_idx);
+        const accuracy = nn.evaluate(X_train_norm, y_train_idx).accuracy;
         
         metrics.push({
           epoch,
           loss: avgLoss,
           accuracy,
           gradientNorm: totalGradNorm / batchCount,
-          updateRatio: totalUpdateNorm / batchCount
+          updateRatio: totalUpdateNorm / batchCount,
+          convergenceSpeed: metrics.length > 0 ? Math.abs(metrics[metrics.length - 1].loss - avgLoss) : 0
         });
 
         // Yield to UI
@@ -225,17 +242,25 @@ export default function App() {
       if (stopTrainingRef.current) break;
 
       setStatusMessage(`Testing ${opt} performance...`);
-      const testAccuracy = nn.evaluate(X_test_norm, y_test_idx);
+      const evalResult = nn.evaluate(X_test_norm, y_test_idx);
       const executionTime = (Date.now() - startTime) / 1000;
       
       const meanLoss = metrics.reduce((s, x) => s + x.loss, 0) / metrics.length;
+      const aulc = metrics.reduce((acc, m) => acc + m.loss, 0);
+
       const result: ExperimentResult = {
         optimizer: opt,
         metrics,
-        testAccuracy,
+        testAccuracy: evalResult.accuracy,
+        precision: evalResult.precision,
+        recall: evalResult.recall,
+        f1Score: evalResult.f1Score,
+        confusionMatrix: evalResult.confusionMatrix,
+        logLoss: evalResult.logLoss,
         executionTime,
         convergenceRate: metrics[0].loss / metrics[metrics.length - 1].loss,
-        lossVariance: metrics.reduce((acc, m) => acc + Math.pow(m.loss - meanLoss, 2), 0) / metrics.length
+        lossVariance: metrics.reduce((acc, m) => acc + Math.pow(m.loss - meanLoss, 2), 0) / metrics.length,
+        aulc
       };
 
       allResults.push(result);
@@ -248,14 +273,22 @@ export default function App() {
         body: JSON.stringify({
           dataset_name: trainFile.name,
           sample_size: sampleSize,
+          train_test_split: trainSplit,
           optimizer: opt,
           hidden_size: params.hiddenSize,
           learning_rate: params.learningRate,
           epochs: params.epochs,
           batch_size: params.batchSize,
-          test_accuracy: testAccuracy,
+          test_accuracy: evalResult.accuracy,
+          precision: evalResult.precision,
+          recall: evalResult.recall,
+          f1_score: evalResult.f1Score,
+          confusion_matrix: evalResult.confusionMatrix,
+          log_loss: evalResult.logLoss,
           convergence_rate: result.convergenceRate,
           execution_time: executionTime,
+          aulc,
+          loss_variance: result.lossVariance,
           logs: metrics
         })
       });
@@ -270,8 +303,8 @@ export default function App() {
   const bestOptimizer = useMemo(() => {
     if (results.length === 0) return null;
     return results.reduce((prev, curr) => {
-      // Simple score: accuracy * 0.6 + convergence * 0.2 - time * 0.2
-      const score = (res: ExperimentResult) => res.testAccuracy * 100 + res.convergenceRate - res.executionTime;
+      // Score: accuracy*40 + f1*30 + convergence*20 - time*10
+      const score = (res: ExperimentResult) => (res.testAccuracy * 40) + (res.f1Score * 30) + (res.convergenceRate * 20) - (res.executionTime * 10);
       return score(curr) > score(prev) ? curr : prev;
     });
   }, [results]);
@@ -283,11 +316,134 @@ export default function App() {
       if (typeof data.logs === 'string') {
         data.logs = JSON.parse(data.logs);
       }
+      if (typeof data.confusion_matrix === 'string') {
+        data.confusion_matrix = JSON.parse(data.confusion_matrix);
+      }
       setSelectedExperiment(data);
       setIsViewingReport(true);
     } catch (e) {
       console.error('Failed to fetch experiment details', e);
     }
+  };
+
+  const downloadReport = (exp: any) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Title
+    doc.setFontSize(22);
+    doc.setTextColor(28, 25, 23); // #1C1917
+    doc.text(`Experiment Report #${exp.id}`, 14, 22);
+
+    // Metadata
+    doc.setFontSize(10);
+    doc.setTextColor(120, 113, 108); // #78716C
+    doc.text(`Generated on ${new Date().toLocaleString()}`, 14, 30);
+    doc.text(`Dataset: ${exp.dataset_name}`, 14, 35);
+
+    // Summary Section
+    doc.setFontSize(16);
+    doc.setTextColor(28, 25, 23);
+    doc.text("Executive Summary", 14, 50);
+
+    const summaryData = [
+      ["Optimizer", exp.optimizer],
+      ["Test Accuracy", safeFixed(exp.test_accuracy, 2, 100, '%')],
+      ["F1 Score", safeFixed(exp.f1_score, 2, 100, '%')],
+      ["Precision", safeFixed(exp.precision, 2, 100, '%')],
+      ["Recall", safeFixed(exp.recall, 2, 100, '%')],
+      ["Log Loss", safeFixed(exp.log_loss, 4)],
+      ["Execution Time", safeFixed(exp.execution_time, 2, 1, 's')]
+    ];
+
+    (doc as any).autoTable({
+      startY: 55,
+      head: [["Metric", "Value"]],
+      body: summaryData,
+      theme: 'striped',
+      headStyles: { fillColor: [28, 25, 23] }
+    });
+
+    // Parameters Section
+    const finalY = (doc as any).lastAutoTable.finalY;
+    doc.setFontSize(16);
+    doc.text("Model Parameters", 14, finalY + 15);
+
+    const paramData = [
+      ["Hidden Size", exp.hidden_size],
+      ["Learning Rate", exp.learning_rate],
+      ["Epochs", exp.epochs],
+      ["Batch Size", exp.batch_size],
+      ["Sample Size", exp.sample_size],
+      ["Train/Test Split", `${exp.train_test_split}% / ${100 - exp.train_test_split}%`]
+    ];
+
+    (doc as any).autoTable({
+      startY: finalY + 20,
+      head: [["Parameter", "Value"]],
+      body: paramData,
+      theme: 'grid',
+      headStyles: { fillColor: [120, 113, 108] }
+    });
+
+    // Epoch Details (New Page if needed)
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.text("Epoch-by-Epoch Training Logs", 14, 22);
+
+    const logs = typeof exp.logs === 'string' ? JSON.parse(exp.logs) : exp.logs;
+    const logData = logs.map((m: any) => [
+      m.epoch,
+      safeFixed(m.loss, 4),
+      safeFixed(m.accuracy, 2, 100, '%'),
+      safeFixed(m.gradientNorm, 4),
+      safeFixed(m.updateRatio, 6)
+    ]);
+
+    (doc as any).autoTable({
+      startY: 30,
+      head: [["Epoch", "Loss", "Accuracy", "Grad Norm", "Update Ratio"]],
+      body: logData,
+      theme: 'striped',
+      headStyles: { fillColor: [28, 25, 23] }
+    });
+
+    doc.save(`experiment_${exp.id}_report.pdf`);
+  };
+
+  const ConfusionMatrix = ({ matrix }: { matrix: number[][] }) => {
+    if (!matrix) return null;
+    const size = matrix.length;
+    const maxVal = Math.max(...matrix.flat());
+    const cellSize = size > 20 ? '12px' : size > 10 ? '20px' : '32px';
+    const fontSize = size > 20 ? '6px' : size > 10 ? '8px' : '10px';
+
+    return (
+      <div 
+        className="grid border border-[#E7E5E4] bg-[#E7E5E4] gap-px rounded overflow-hidden shadow-inner" 
+        style={{ 
+          gridTemplateColumns: `repeat(${size}, minmax(${cellSize}, 1fr))`,
+          width: 'fit-content'
+        }}
+      >
+        {matrix.map((row, i) => row.map((val, j) => (
+          <div 
+            key={`${i}-${j}`}
+            className="aspect-square flex items-center justify-center font-bold transition-colors hover:brightness-90"
+            style={{ 
+              backgroundColor: `rgba(5, 150, 105, ${val / maxVal || 0.05})`,
+              color: val / maxVal > 0.5 ? 'white' : '#1C1917',
+              fontSize: fontSize,
+              width: cellSize,
+              height: cellSize
+            }}
+            title={`True: ${i}, Pred: ${j}, Count: ${val}`}
+          >
+            {size <= 15 ? val : (val > 0 ? '•' : '')}
+          </div>
+        )))}
+      </div>
+    );
   };
 
   const chartData = useMemo(() => {
@@ -315,7 +471,7 @@ export default function App() {
           <div className="bg-[#1C1917] p-2 rounded-lg">
             <Database className="text-white w-5 h-5" />
           </div>
-          <h1 className="font-bold text-lg tracking-tight">ML Experimenter</h1>
+          <h1 className="font-bold text-lg tracking-tight">NeuroOpt Lab</h1>
         </div>
 
         {/* Dataset Upload */}
@@ -361,6 +517,25 @@ export default function App() {
               <span>1k</span>
               <span>20k</span>
             </div>
+          </div>
+        </section>
+
+        {/* Train-Test Split */}
+        <section className="space-y-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-[#78716C] uppercase tracking-wider">
+            <Scissors className="w-3 h-3" />
+            Train-Test Split
+          </div>
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs font-medium">
+              <span>Train: {trainSplit}%</span>
+              <span>Test: {100 - trainSplit}%</span>
+            </div>
+            <input 
+              type="range" min="50" max="95" step="5" value={trainSplit} 
+              onChange={e => setTrainSplit(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+            />
           </div>
         </section>
 
@@ -457,7 +632,7 @@ export default function App() {
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-lg">Training Preview</h2>
                 <div className="flex gap-4 text-xs font-medium text-[#78716C]">
-                  <span>Rows: {trainData.length}</span>
+                  <span>Shape: {trainData.length} × {Object.keys(trainData[0] || {}).length}</span>
                 </div>
               </div>
               <div className="overflow-x-auto border border-[#E7E5E4] rounded-lg">
@@ -488,7 +663,7 @@ export default function App() {
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-lg">Testing Preview</h2>
                 <div className="flex gap-4 text-xs font-medium text-[#78716C]">
-                  <span>Rows: {testData.length}</span>
+                  <span>Shape: {testData.length} × {Object.keys(testData[0] || {}).length}</span>
                 </div>
               </div>
               <div className="overflow-x-auto border border-[#E7E5E4] rounded-lg">
@@ -695,10 +870,12 @@ export default function App() {
                 <thead className="bg-[#F5F5F4] text-[#78716C] uppercase text-[10px] tracking-wider">
                   <tr>
                     <th className="px-6 py-4 font-semibold">Optimizer</th>
-                    <th className="px-6 py-4 font-semibold">Test Accuracy</th>
-                    <th className="px-6 py-4 font-semibold">Convergence Rate</th>
-                    <th className="px-6 py-4 font-semibold">Execution Time</th>
-                    <th className="px-6 py-4 font-semibold">Loss Variance</th>
+                    <th className="px-6 py-4 font-semibold">Accuracy</th>
+                    <th className="px-6 py-4 font-semibold">F1 Score</th>
+                    <th className="px-6 py-4 font-semibold">Precision</th>
+                    <th className="px-6 py-4 font-semibold">Recall</th>
+                    <th className="px-6 py-4 font-semibold">Convergence</th>
+                    <th className="px-6 py-4 font-semibold">Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E7E5E4]">
@@ -708,10 +885,12 @@ export default function App() {
                         {res.optimizer}
                         {bestOptimizer?.optimizer === res.optimizer && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
                       </td>
-                      <td className="px-6 py-4">{(res.testAccuracy * 100).toFixed(2)}%</td>
-                      <td className="px-6 py-4">{res.convergenceRate.toFixed(2)}x</td>
-                      <td className="px-6 py-4">{res.executionTime.toFixed(2)}s</td>
-                      <td className="px-6 py-4">{res.lossVariance.toExponential(2)}</td>
+                      <td className="px-6 py-4">{safeFixed(res.testAccuracy, 1, 100, '%')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.f1Score, 1, 100, '%')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.precision, 1, 100, '%')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.recall, 1, 100, '%')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.convergenceRate, 2, 1, 'x')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.executionTime, 1, 1, 's')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -727,7 +906,7 @@ export default function App() {
               <h3 className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">Best Optimizer</h3>
               <div className="text-3xl font-black mb-4">{bestOptimizer.optimizer}</div>
               <p className="text-sm leading-relaxed opacity-90">
-                The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{(bestOptimizer.testAccuracy * 100).toFixed(2)}%</span> with a convergence rate of <span className="font-bold">{bestOptimizer.convergenceRate.toFixed(2)}x</span>.
+                The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 2, 1, 'x')}</span>.
               </p>
             </section>
 
@@ -779,11 +958,11 @@ export default function App() {
                   <div className="flex gap-8 text-right">
                     <div>
                       <div className="text-[10px] text-[#78716C] uppercase font-semibold">Accuracy</div>
-                      <div className="text-sm font-bold">{(exp.test_accuracy * 100).toFixed(1)}%</div>
+                      <div className="text-sm font-bold">{safeFixed(exp.test_accuracy, 1, 100, '%')}</div>
                     </div>
                     <div>
                       <div className="text-[10px] text-[#78716C] uppercase font-semibold">Time</div>
-                      <div className="text-sm font-bold">{exp.execution_time.toFixed(1)}s</div>
+                      <div className="text-sm font-bold">{safeFixed(exp.execution_time, 1, 1, 's')}</div>
                     </div>
                   </div>
                 </div>
@@ -793,9 +972,15 @@ export default function App() {
         </section>
 
         {/* Experiment Report Modal */}
-        {isViewingReport && selectedExperiment && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-8">
-            <div className="bg-white w-full max-w-6xl max-height-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+        <AnimatePresence>
+          {isViewingReport && selectedExperiment && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-8">
+              <motion.div 
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                className="bg-white w-full max-w-6xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              >
               <div className="p-6 border-b border-[#E7E5E4] flex justify-between items-center bg-[#F5F5F4]">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight">Experiment Report #{selectedExperiment.id}</h2>
@@ -836,8 +1021,8 @@ export default function App() {
                     <Info className="w-4 h-4" /> Experiment Analysis
                   </h3>
                   <p className="text-sm text-emerald-800 leading-relaxed">
-                    This experiment using <span className="font-bold">{selectedExperiment.optimizer}</span> on the <span className="font-bold">{selectedExperiment.dataset_name}</span> dataset achieved a test accuracy of <span className="font-bold">{(selectedExperiment.test_accuracy * 100).toFixed(2)}%</span>. 
-                    The model converged with a rate of <span className="font-bold">{selectedExperiment.convergence_rate.toFixed(2)}x</span> over <span className="font-bold">{selectedExperiment.execution_time.toFixed(2)}s</span>.
+                    This experiment using <span className="font-bold">{selectedExperiment.optimizer}</span> on the <span className="font-bold">{selectedExperiment.dataset_name}</span> dataset achieved a test accuracy of <span className="font-bold">{safeFixed(selectedExperiment.test_accuracy, 2, 100, '%')}</span>. 
+                    The model converged with a rate of <span className="font-bold">{safeFixed(selectedExperiment.convergence_rate, 2, 1, 'x')}</span> over <span className="font-bold">{safeFixed(selectedExperiment.execution_time, 2, 1, 's')}</span>.
                     {selectedExperiment.optimizer === 'Adam' ? " Adam's adaptive learning rate helped in stable convergence." : ""}
                     {selectedExperiment.test_accuracy > 0.8 ? " The high accuracy suggests well-tuned parameters for this specific data." : " There might be room for improvement by adjusting the learning rate or hidden layer size."}
                   </p>
@@ -878,6 +1063,83 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Advanced Metrics */}
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">F1 Score</div>
+                    <div className="text-xl font-black text-blue-600">{safeFixed(selectedExperiment.f1_score, 2, 100, '%')}</div>
+                  </div>
+                  <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Log Loss</div>
+                    <div className="text-xl font-black text-rose-600">{safeFixed(selectedExperiment.log_loss, 4)}</div>
+                  </div>
+                  <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">AULC</div>
+                    <div className="text-xl font-black text-amber-600">{safeFixed(selectedExperiment.aulc, 2)}</div>
+                  </div>
+                  <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
+                    <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Loss Variance</div>
+                    <div className="text-xl font-black">{safeFixed(selectedExperiment.loss_variance, 6)}</div>
+                  </div>
+                </div>
+
+                {/* Advanced Visualizations */}
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><TrendingDown className="w-4 h-4" /> Convergence Speed</h4>
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={selectedExperiment.logs}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis dataKey="epoch" hide />
+                          <YAxis tick={{fontSize: 10}} />
+                          <Tooltip />
+                          <Area type="monotone" dataKey="convergenceSpeed" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.1} name="Speed" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Activity className="w-4 h-4" /> Training Stability</h4>
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ScatterChart>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis type="number" dataKey="epoch" name="Epoch" hide />
+                          <YAxis type="number" dataKey="loss" name="Loss" tick={{fontSize: 10}} />
+                          <ZAxis type="number" dataKey="updateRatio" range={[20, 200]} name="Update" />
+                          <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                          <Scatter name="Stability" data={selectedExperiment.logs} fill="#EC4899" fillOpacity={0.6} />
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Target className="w-4 h-4" /> Confusion Matrix</h4>
+                    <div className="h-48 overflow-auto flex items-center justify-center bg-[#FAFAFA] rounded-xl border border-[#F5F5F4] p-4 custom-scrollbar">
+                      <ConfusionMatrix matrix={selectedExperiment.confusion_matrix} />
+                    </div>
+                  </div>
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                    <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Zap className="w-4 h-4" /> Optimization Dynamics</h4>
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={selectedExperiment.logs}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis dataKey="epoch" hide />
+                          <YAxis tick={{fontSize: 10}} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="updateRatio" stroke="#3B82F6" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="gradientNorm" stroke="#F59E0B" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Epoch Table */}
                 <section>
                   <h3 className="font-bold mb-4">Epoch Details</h3>
@@ -896,10 +1158,10 @@ export default function App() {
                         {selectedExperiment.logs.map((m: any) => (
                           <tr key={m.epoch}>
                             <td className="px-6 py-3 font-bold">{m.epoch}</td>
-                            <td className="px-6 py-3">{m.loss.toFixed(4)}</td>
-                            <td className="px-6 py-3">{(m.accuracy * 100).toFixed(2)}%</td>
-                            <td className="px-6 py-3">{m.gradientNorm.toFixed(4)}</td>
-                            <td className="px-6 py-3">{m.updateRatio.toFixed(6)}</td>
+                            <td className="px-6 py-3">{safeFixed(m.loss, 4)}</td>
+                            <td className="px-6 py-3">{safeFixed(m.accuracy, 2, 100, '%')}</td>
+                            <td className="px-6 py-3">{safeFixed(m.gradientNorm, 4)}</td>
+                            <td className="px-6 py-3">{safeFixed(m.updateRatio, 6)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -908,24 +1170,38 @@ export default function App() {
                 </section>
 
                 {/* Testing Results */}
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-4 gap-6">
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
-                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Test Accuracy</div>
-                    <div className="text-3xl font-black text-emerald-600">{(selectedExperiment.test_accuracy * 100).toFixed(2)}%</div>
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Precision</div>
+                    <div className="text-2xl font-black">{safeFixed(selectedExperiment.precision, 1, 100, '%')}</div>
                   </div>
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
-                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Convergence</div>
-                    <div className="text-3xl font-black">{selectedExperiment.convergence_rate.toFixed(2)}x</div>
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Recall</div>
+                    <div className="text-2xl font-black">{safeFixed(selectedExperiment.recall, 1, 100, '%')}</div>
                   </div>
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
-                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Execution Time</div>
-                    <div className="text-3xl font-black">{selectedExperiment.execution_time.toFixed(2)}s</div>
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">F1 Score</div>
+                    <div className="text-2xl font-black">{safeFixed(selectedExperiment.f1_score, 1, 100, '%')}</div>
+                  </div>
+                  <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
+                    <div className="text-xs text-[#78716C] uppercase font-bold mb-1">Log Loss</div>
+                    <div className="text-2xl font-black">{safeFixed(selectedExperiment.log_loss, 3)}</div>
                   </div>
                 </div>
+
+                <div className="flex justify-center pt-4">
+                  <button 
+                    onClick={() => downloadReport(selectedExperiment)}
+                    className="flex items-center gap-2 px-6 py-3 bg-[#1C1917] text-white rounded-xl font-bold hover:bg-black transition-all shadow-lg"
+                  >
+                    <Download className="w-4 h-4" /> Download Experiment Report (PDF)
+                  </button>
+                </div>
               </div>
+              </motion.div>
             </div>
-          </div>
-        )}
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );

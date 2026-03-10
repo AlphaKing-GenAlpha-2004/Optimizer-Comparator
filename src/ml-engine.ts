@@ -15,15 +15,22 @@ export interface TrainingMetric {
   accuracy: number;
   gradientNorm: number;
   updateRatio: number;
+  convergenceSpeed: number;
 }
 
 export interface ExperimentResult {
   optimizer: OptimizerType;
   metrics: TrainingMetric[];
   testAccuracy: number;
+  precision: number;
+  recall: number;
+  f1Score: number;
+  confusionMatrix: number[][];
+  logLoss: number;
   executionTime: number;
   convergenceRate: number;
   lossVariance: number;
+  aulc: number;
 }
 
 export class NeuralNetwork {
@@ -211,11 +218,57 @@ export class NeuralNetwork {
 
   evaluate(x: any, y: any) {
     const { a2 } = this.forward(x);
+    const numClasses = a2[0].length;
+    const confusionMatrix = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
     let correct = 0;
+    let logLoss = 0;
+
     a2.forEach((pred: any, i: number) => {
       const predLabel = pred.indexOf(Math.max(...pred));
-      if (predLabel === y[i]) correct++;
+      const trueLabel = y[i];
+      confusionMatrix[trueLabel][predLabel]++;
+      if (predLabel === trueLabel) correct++;
+      logLoss -= Math.log(pred[trueLabel] + 1e-15);
     });
-    return correct / y.length;
+
+    const accuracy = correct / y.length;
+    logLoss /= y.length;
+
+    // Calculate Macro Precision, Recall, F1
+    let totalPrecision = 0;
+    let totalRecall = 0;
+    let validPrecisionClasses = 0;
+    let validRecallClasses = 0;
+
+    for (let i = 0; i < numClasses; i++) {
+      const tp = confusionMatrix[i][i];
+      const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
+      const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
+
+      const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+      const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+
+      if (tp + fp > 0) {
+        totalPrecision += precision;
+        validPrecisionClasses++;
+      }
+      if (tp + fn > 0) {
+        totalRecall += recall;
+        validRecallClasses++;
+      }
+    }
+
+    const precision = validPrecisionClasses > 0 ? totalPrecision / validPrecisionClasses : 0;
+    const recall = validRecallClasses > 0 ? totalRecall / validRecallClasses : 0;
+    const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+
+    return {
+      accuracy,
+      precision,
+      recall,
+      f1Score,
+      confusionMatrix,
+      logLoss
+    };
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "ML Optimizer Comparison Dashboard",
+  "name": "NeuroOpt Lab",
   "description": "A comparative study dashboard for SGD, Adagrad, RMSProp, and Adam optimizers on neural networks with real-time tracking and SQLite persistence.",
   "requestFramePermissions": []
 }

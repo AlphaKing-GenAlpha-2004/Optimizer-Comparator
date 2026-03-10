@@ -9,20 +9,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database('experiments.db');
 
 // Initialize Database
-db.exec(`DROP TABLE IF EXISTS experiments`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dataset_name TEXT,
     sample_size INTEGER,
+    train_test_split REAL,
     optimizer TEXT,
     hidden_size INTEGER,
     learning_rate REAL,
     epochs INTEGER,
     batch_size INTEGER,
     test_accuracy REAL,
+    precision REAL,
+    recall REAL,
+    f1_score REAL,
+    confusion_matrix TEXT,
+    log_loss REAL,
     convergence_rate REAL,
     execution_time REAL,
+    aulc REAL,
+    loss_variance REAL,
     logs TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   )
@@ -58,23 +65,27 @@ async function startServer() {
 
   app.post('/api/experiments', (req, res) => {
     const { 
-      dataset_name, sample_size, optimizer, 
+      dataset_name, sample_size, train_test_split, optimizer, 
       hidden_size, learning_rate, epochs, batch_size,
-      test_accuracy, convergence_rate, execution_time, logs 
+      test_accuracy, precision, recall, f1_score, confusion_matrix,
+      log_loss, convergence_rate, execution_time, aulc, loss_variance, logs 
     } = req.body;
     try {
       const stmt = db.prepare(`
         INSERT INTO experiments (
-          dataset_name, sample_size, optimizer, 
+          dataset_name, sample_size, train_test_split, optimizer, 
           hidden_size, learning_rate, epochs, batch_size,
-          test_accuracy, convergence_rate, execution_time, logs
+          test_accuracy, precision, recall, f1_score, confusion_matrix,
+          log_loss, convergence_rate, execution_time, aulc, loss_variance, logs
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       stmt.run(
-        dataset_name, sample_size, optimizer, 
+        dataset_name, sample_size, train_test_split, optimizer, 
         hidden_size, learning_rate, epochs, batch_size,
-        test_accuracy, convergence_rate, execution_time, 
+        test_accuracy, precision, recall, f1_score, 
+        typeof confusion_matrix === 'string' ? confusion_matrix : JSON.stringify(confusion_matrix),
+        log_loss, convergence_rate, execution_time, aulc, loss_variance,
         typeof logs === 'string' ? logs : JSON.stringify(logs)
       );
       res.json({ success: true });
