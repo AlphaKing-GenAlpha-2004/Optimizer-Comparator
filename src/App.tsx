@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, Cell, ScatterChart, Scatter, ZAxis, AreaChart, Area
@@ -28,8 +28,8 @@ export default function App() {
   
   const [features, setFeatures] = useState<string[]>([]);
   const [target, setTarget] = useState<string>('');
-  const [sampleSize, setSampleSize] = useState<number>(10000);
-  const [trainSplit, setTrainSplit] = useState<number>(80);
+  const [trainSampleSize, setTrainSampleSize] = useState<number>(10000);
+  const [testSampleSize, setTestSampleSize] = useState<number>(2000);
   
   const [params, setParams] = useState<ModelParams>({
     hiddenSize: 64,
@@ -39,6 +39,9 @@ export default function App() {
   });
 
   const [isTraining, setIsTraining] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [trainingProgress, setTrainingProgress] = useState(0);
+  const [testingProgress, setTestingProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [selectedExperiment, setSelectedExperiment] = useState<any>(null);
@@ -152,19 +155,14 @@ export default function App() {
       });
     };
 
-    const fullTrain = await loadAndSample(trainFile, sampleSize);
-    const fullTest = await loadAndSample(testFile, Math.min(2000, sampleSize));
+    const fullTrain = await loadAndSample(trainFile, trainSampleSize);
+    const fullTest = await loadAndSample(testFile, testSampleSize);
 
     // Prepare data
-    const X_full = fullTrain.map(row => features.map(f => Number(row[f]) || 0));
-    const y_full = fullTrain.map(row => row[target]);
-
-    // Train-Test Split
-    const splitIdx = Math.floor(X_full.length * (trainSplit / 100));
-    const X_train_raw = X_full.slice(0, splitIdx);
-    const y_train = y_full.slice(0, splitIdx);
-    const X_test_raw = X_full.slice(splitIdx);
-    const y_test = y_full.slice(splitIdx);
+    const X_train_raw = fullTrain.map(row => features.map(f => Number(row[f]) || 0));
+    const y_train = fullTrain.map(row => row[target]);
+    const X_test_raw = fullTest.map(row => features.map(f => Number(row[f]) || 0));
+    const y_test = fullTest.map(row => row[target]);
 
     const normalize = (data: any[][]) => {
       if (data.length === 0) return [];
@@ -177,7 +175,7 @@ export default function App() {
     const X_test_norm = normalize(X_test_raw);
 
     // Unique classes
-    const classes = Array.from(new Set(y_full)).sort();
+    const classes = Array.from(new Set([...y_train, ...y_test])).sort();
     const classMap = new Map(classes.map((c, i) => [c, i]));
     const y_train_idx = y_train.map(v => classMap.get(v) || 0);
     const y_test_idx = y_test.map(v => classMap.get(v) || 0);
@@ -188,9 +186,12 @@ export default function App() {
     for (const opt of optimizers) {
       if (stopTrainingRef.current) break;
       setCurrentOptimizer(opt);
-      setStatusMessage(`Training ${opt} optimizer...`);
-      const startTime = Date.now();
+      setTrainingProgress(0);
+      setTestingProgress(0);
+      setIsTesting(false);
+      setElapsedTime(0); // Reset timer for each optimizer
       
+      const startTime = Date.now();
       const nn = new NeuralNetwork(features.length, params.hiddenSize, classes.length);
       const metrics: TrainingMetric[] = [];
 
@@ -219,12 +220,16 @@ export default function App() {
           totalGradNorm += gradNorm;
           totalUpdateNorm += updateNorm;
           batchCount++;
+          
+          setTrainingProgress(((epoch - 1) * X_train_norm.length + i + batchX.length) / (params.epochs * X_train_norm.length) * 100);
         }
 
         if (stopTrainingRef.current) break;
 
         const avgLoss = totalLoss / batchCount;
-        const accuracy = nn.evaluate(X_train_norm, y_train_idx).accuracy;
+        // Fast evaluation on a subset for training metrics to keep UI responsive
+        const trainEval = nn.evaluate(X_train_norm.slice(0, 1000), y_train_idx.slice(0, 1000));
+        const accuracy = trainEval.accuracy;
         
         metrics.push({
           epoch,
@@ -241,22 +246,82 @@ export default function App() {
 
       if (stopTrainingRef.current) break;
 
+      setIsTesting(true);
       setStatusMessage(`Testing ${opt} performance...`);
-      const evalResult = nn.evaluate(X_test_norm, y_test_idx);
-      const executionTime = (Date.now() - startTime) / 1000;
       
+      // Batch-wise evaluation to show progress
+      const testBatchSize = 500;
+      let correct = 0;
+      let totalLogLoss = 0;
+      const numClasses = classes.length;
+      const confusionMatrix = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
+
+      for (let i = 0; i < X_test_norm.length; i += testBatchSize) {
+        await checkPause();
+        if (stopTrainingRef.current) break;
+
+        const batchX = X_test_norm.slice(i, i + testBatchSize);
+        const batchY = y_test_idx.slice(i, i + testBatchSize);
+        
+        const { a2 } = nn.forward(batchX);
+        a2.forEach((pred: any, idx: number) => {
+          const predLabel = pred.indexOf(Math.max(...pred));
+          const trueLabel = batchY[idx];
+          confusionMatrix[trueLabel][predLabel]++;
+          if (predLabel === trueLabel) correct++;
+          totalLogLoss -= Math.log(pred[trueLabel] + 1e-15);
+        });
+
+        setTestingProgress(((i + batchX.length) / X_test_norm.length) * 100);
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      if (stopTrainingRef.current) break;
+
+      const testAccuracy = correct / X_test_norm.length;
+      const logLoss = totalLogLoss / X_test_norm.length;
+
+      // Calculate Macro Precision, Recall, F1
+      let totalPrecision = 0;
+      let totalRecall = 0;
+      let validPrecisionClasses = 0;
+      let validRecallClasses = 0;
+
+      for (let i = 0; i < numClasses; i++) {
+        const tp = confusionMatrix[i][i];
+        const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
+        const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
+
+        const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+        const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+
+        if (tp + fp > 0) {
+          totalPrecision += precision;
+          validPrecisionClasses++;
+        }
+        if (tp + fn > 0) {
+          totalRecall += recall;
+          validRecallClasses++;
+        }
+      }
+
+      const precision = validPrecisionClasses > 0 ? totalPrecision / validPrecisionClasses : 0;
+      const recall = validRecallClasses > 0 ? totalRecall / validRecallClasses : 0;
+      const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+
+      const executionTime = (Date.now() - startTime) / 1000;
       const meanLoss = metrics.reduce((s, x) => s + x.loss, 0) / metrics.length;
       const aulc = metrics.reduce((acc, m) => acc + m.loss, 0);
 
       const result: ExperimentResult = {
         optimizer: opt,
         metrics,
-        testAccuracy: evalResult.accuracy,
-        precision: evalResult.precision,
-        recall: evalResult.recall,
-        f1Score: evalResult.f1Score,
-        confusionMatrix: evalResult.confusionMatrix,
-        logLoss: evalResult.logLoss,
+        testAccuracy,
+        precision,
+        recall,
+        f1Score,
+        confusionMatrix,
+        logLoss,
         executionTime,
         convergenceRate: metrics[0].loss / metrics[metrics.length - 1].loss,
         lossVariance: metrics.reduce((acc, m) => acc + Math.pow(m.loss - meanLoss, 2), 0) / metrics.length,
@@ -272,19 +337,19 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dataset_name: trainFile.name,
-          sample_size: sampleSize,
-          train_test_split: trainSplit,
+          sample_size: trainSampleSize,
+          train_test_split: (trainSampleSize / (trainSampleSize + testSampleSize)) * 100,
           optimizer: opt,
           hidden_size: params.hiddenSize,
           learning_rate: params.learningRate,
           epochs: params.epochs,
           batch_size: params.batchSize,
-          test_accuracy: evalResult.accuracy,
-          precision: evalResult.precision,
-          recall: evalResult.recall,
-          f1_score: evalResult.f1Score,
-          confusion_matrix: evalResult.confusionMatrix,
-          log_loss: evalResult.logLoss,
+          test_accuracy: testAccuracy,
+          precision,
+          recall,
+          f1_score: f1Score,
+          confusion_matrix: confusionMatrix,
+          log_loss: logLoss,
           convergence_rate: result.convergenceRate,
           execution_time: executionTime,
           aulc,
@@ -295,6 +360,7 @@ export default function App() {
     }
 
     setIsTraining(false);
+    setIsTesting(false);
     setCurrentOptimizer(null);
     setStatusMessage('Experiment complete.');
     fetchHistory();
@@ -356,7 +422,7 @@ export default function App() {
       ["Execution Time", safeFixed(exp.execution_time, 2, 1, 's')]
     ];
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: 55,
       head: [["Metric", "Value"]],
       body: summaryData,
@@ -378,7 +444,7 @@ export default function App() {
       ["Train/Test Split", `${exp.train_test_split}% / ${100 - exp.train_test_split}%`]
     ];
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: finalY + 20,
       head: [["Parameter", "Value"]],
       body: paramData,
@@ -387,6 +453,7 @@ export default function App() {
     });
 
     // Epoch Details (New Page if needed)
+    const finalY2 = (doc as any).lastAutoTable.finalY;
     doc.addPage();
     doc.setFontSize(16);
     doc.text("Epoch-by-Epoch Training Logs", 14, 22);
@@ -400,7 +467,7 @@ export default function App() {
       safeFixed(m.updateRatio, 6)
     ]);
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: 30,
       head: [["Epoch", "Loss", "Accuracy", "Grad Norm", "Update Ratio"]],
       body: logData,
@@ -471,7 +538,7 @@ export default function App() {
           <div className="bg-[#1C1917] p-2 rounded-lg">
             <Database className="text-white w-5 h-5" />
           </div>
-          <h1 className="font-bold text-lg tracking-tight">NeuroOpt Lab</h1>
+          <h1 className="font-bold text-lg tracking-tight">Neur-O-Opt Lab</h1>
         </div>
 
         {/* Dataset Upload */}
@@ -500,42 +567,37 @@ export default function App() {
           </div>
         </section>
 
-        {/* Sample Size */}
+        {/* Sample Sizes */}
         <section className="space-y-4">
           <div className="flex items-center gap-2 text-xs font-semibold text-[#78716C] uppercase tracking-wider">
             <BarChart3 className="w-3 h-3" />
             Sampling
           </div>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium">Sample Size: {sampleSize}</label>
-            <input 
-              type="range" min="1000" max="20000" step="1000" value={sampleSize}
-              onChange={(e) => setSampleSize(parseInt(e.target.value))}
-              className="w-full accent-[#1C1917]"
-            />
-            <div className="flex justify-between text-[10px] text-[#A8A29E]">
-              <span>1k</span>
-              <span>20k</span>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="block text-[11px] font-medium">Training Samples: {trainSampleSize.toLocaleString()}</label>
+              <input 
+                type="range" min="2000" max="500000" step="1000" value={trainSampleSize}
+                onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
+                className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+              />
+              <div className="flex justify-between text-[10px] text-[#A8A29E]">
+                <span>2k</span>
+                <span>500k</span>
+              </div>
             </div>
-          </div>
-        </section>
-
-        {/* Train-Test Split */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#78716C] uppercase tracking-wider">
-            <Scissors className="w-3 h-3" />
-            Train-Test Split
-          </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs font-medium">
-              <span>Train: {trainSplit}%</span>
-              <span>Test: {100 - trainSplit}%</span>
+            <div className="space-y-2">
+              <label className="block text-[11px] font-medium">Testing Samples: {testSampleSize.toLocaleString()}</label>
+              <input 
+                type="range" min="500" max="50000" step="500" value={testSampleSize}
+                onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
+                className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+              />
+              <div className="flex justify-between text-[10px] text-[#A8A29E]">
+                <span>500</span>
+                <span>50k</span>
+              </div>
             </div>
-            <input 
-              type="range" min="50" max="95" step="5" value={trainSplit} 
-              onChange={e => setTrainSplit(parseInt(e.target.value))}
-              className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
-            />
           </div>
         </section>
 
@@ -724,16 +786,32 @@ export default function App() {
                 <div className="text-3xl font-bold tracking-tight">{elapsedTime}s</div>
               </div>
             </div>
-            <div className="mt-8 space-y-2">
-              <div className="flex justify-between text-xs font-medium text-[#A8A29E]">
-                <span>Overall Progress</span>
-                <span>{params.epochs > 0 ? Math.round(((results.length * params.epochs + currentEpoch) / (4 * params.epochs)) * 100) : 0}%</span>
+            <div className="mt-8 grid grid-cols-2 gap-8">
+              <div className="space-y-2">
+                <div className="flex justify-between text-[10px] font-bold text-[#A8A29E] uppercase tracking-widest">
+                  <span>Training Progress</span>
+                  <span>{Math.round(trainingProgress)}%</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-emerald-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${trainingProgress}%` }}
+                  />
+                </div>
               </div>
-              <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-white transition-all duration-300" 
-                  style={{ width: `${params.epochs > 0 ? ((results.length * params.epochs + currentEpoch) / (4 * params.epochs)) * 100 : 0}%` }}
-                />
+              <div className="space-y-2">
+                <div className="flex justify-between text-[10px] font-bold text-[#A8A29E] uppercase tracking-widest">
+                  <span>Testing Progress</span>
+                  <span>{Math.round(testingProgress)}%</span>
+                </div>
+                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-blue-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${testingProgress}%` }}
+                  />
+                </div>
               </div>
             </div>
           </section>

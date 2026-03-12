@@ -1,5 +1,5 @@
 {
-  "name": "NeuroOpt Lab",
-  "description": "A comparative study dashboard for SGD, Adagrad, RMSProp, and Adam optimizers on neural networks with real-time tracking and SQLite persistence.",
+  "name": "Neur-O-Opt Lab",
+  "description": "A high-performance benchmarking dashboard for neural network optimizers (Adam, SGD, RMSProp, Adagrad) with real-time visualization, PDF reporting, and persistent experiment history.",
   "requestFramePermissions": []
 }
