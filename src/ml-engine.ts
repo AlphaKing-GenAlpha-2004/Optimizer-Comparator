@@ -46,9 +46,9 @@ export class NeuralNetwork {
   private t: number = 0;
 
   constructor(inputSize: number, hiddenSize: number, outputSize: number) {
-    // Xavier/Glorot Initialization
-    const scale1 = Math.sqrt(2.0 / (inputSize + hiddenSize));
-    const scale2 = Math.sqrt(2.0 / (hiddenSize + outputSize));
+    // He Initialization (better for ReLU)
+    const scale1 = Math.sqrt(2.0 / inputSize);
+    const scale2 = Math.sqrt(2.0 / hiddenSize);
     
     this.w1 = math.multiply(math.random([inputSize, hiddenSize], -1, 1), scale1);
     this.b1 = math.zeros([1, hiddenSize]);
@@ -114,23 +114,24 @@ export class NeuralNetwork {
     const batchSize = x.length;
     const { z1, a1, z2, a2 } = this.forward(x);
 
-    // One-hot y
+    // Label smoothing
     const numClasses = a2[0].length;
-    const yOneHot = Array.from({ length: batchSize }, () => new Array(numClasses).fill(0));
+    const smoothing = 0.1;
+    const ySmoothed = Array.from({ length: batchSize }, () => new Array(numClasses).fill(smoothing / numClasses));
     y.forEach((label: number, i: number) => {
-      if (yOneHot[i]) {
-        yOneHot[i][label] = 1;
+      if (ySmoothed[i]) {
+        ySmoothed[i][label] = (1 - smoothing) + (smoothing / numClasses);
       }
     });
 
     // Backprop
-    const dz2 = math.divide(math.subtract(a2, yOneHot), batchSize);
-    const dw2 = math.multiply(math.transpose(a1), dz2);
+    const dz2 = math.divide(math.subtract(a2, ySmoothed), batchSize);
+    const dw2 = math.add(math.multiply(math.transpose(a1), dz2), math.multiply(0.001, this.w2)); // Increased L2 Regularization
     const db2 = math.multiply(math.ones([1, batchSize]), dz2) as any;
 
     const da1 = math.multiply(dz2, math.transpose(this.w2));
     const dz1 = math.dotMultiply(da1, this.reluDeriv(z1));
-    const dw1 = math.multiply(math.transpose(x), dz1);
+    const dw1 = math.add(math.multiply(math.transpose(x), dz1), math.multiply(0.001, this.w1)); // Increased L2 Regularization
     const db1 = math.multiply(math.ones([1, batchSize]), dz1) as any;
 
     const grads = { dw1, db1, dw2, db2 };
@@ -234,33 +235,28 @@ export class NeuralNetwork {
     const accuracy = correct / y.length;
     logLoss /= y.length;
 
-    // Calculate Macro Precision, Recall, F1
+    // Calculate Macro Precision, Recall, F1 (Average of per-class metrics)
     let totalPrecision = 0;
     let totalRecall = 0;
-    let validPrecisionClasses = 0;
-    let validRecallClasses = 0;
+    let totalF1 = 0;
 
     for (let i = 0; i < numClasses; i++) {
       const tp = confusionMatrix[i][i];
       const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
       const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
 
-      const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-      const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+      const p = tp + fp > 0 ? tp / (tp + fp) : 0;
+      const r = tp + fn > 0 ? tp / (tp + fn) : 0;
+      const f = p + r > 0 ? (2 * p * r) / (p + r) : 0;
 
-      if (tp + fp > 0) {
-        totalPrecision += precision;
-        validPrecisionClasses++;
-      }
-      if (tp + fn > 0) {
-        totalRecall += recall;
-        validRecallClasses++;
-      }
+      totalPrecision += p;
+      totalRecall += r;
+      totalF1 += f;
     }
 
-    const precision = validPrecisionClasses > 0 ? totalPrecision / validPrecisionClasses : 0;
-    const recall = validRecallClasses > 0 ? totalRecall / validRecallClasses : 0;
-    const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+    const precision = totalPrecision / numClasses;
+    const recall = totalRecall / numClasses;
+    const f1Score = (precision + recall > 0) ? (2 * precision * recall) / (precision + recall) : 0;
 
     return {
       accuracy,

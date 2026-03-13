@@ -46,13 +46,19 @@ const METRICS_INFO = {
   'Convergence Rate': 'Measures the efficiency of an optimizer relative to a baseline optimizer (SGD) in reaching a stable loss.'
 };
 
-const InfoTooltip = ({ title, content }: { title: string, content: string }) => (
+const InfoTooltip = ({ title, content, position = 'top' }: { title: string, content: string, position?: 'top' | 'bottom' }) => (
   <div className="group relative inline-block ml-1 align-middle">
     <Info className="w-4 h-4 text-[#A8A29E] hover:text-[#1C1917] cursor-help transition-colors" />
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-64 p-3 bg-[#1C1917] text-white text-[11px] rounded-xl shadow-2xl z-[100] animate-in fade-in zoom-in-95 duration-200">
+    <div className={cn(
+      "absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-64 p-3 bg-[#1C1917] text-white text-[11px] rounded-xl shadow-2xl z-[100] animate-in fade-in zoom-in-95 duration-200",
+      position === 'top' ? "bottom-full mb-2" : "top-full mt-2"
+    )}>
       <div className="font-bold mb-1 text-emerald-400">{title}</div>
       <div className="leading-relaxed opacity-90">{content}</div>
-      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-[#1C1917]" />
+      <div className={cn(
+        "absolute left-1/2 -translate-x-1/2 border-8 border-transparent",
+        position === 'top' ? "top-full border-t-[#1C1917]" : "bottom-full border-b-[#1C1917]"
+      )} />
     </div>
   </div>
 );
@@ -71,7 +77,7 @@ export default function App() {
   
   const [params, setParams] = useState<ModelParams>({
     hiddenSize: 64,
-    learningRate: 0.01,
+    learningRate: 0.001,
     epochs: 10,
     batchSize: 64
   });
@@ -202,15 +208,20 @@ export default function App() {
     const X_test_raw = fullTest.map(row => features.map(f => Number(row[f]) || 0));
     const y_test = fullTest.map(row => row[target]);
 
-    const normalize = (data: any[][]) => {
-      if (data.length === 0) return [];
+    const getStats = (data: any[][]) => {
+      if (data.length === 0) return { means: [], stds: [] };
       const means = data[0].map((_, col) => data.reduce((acc, row) => acc + row[col], 0) / data.length);
       const stds = data[0].map((_, col) => Math.sqrt(data.reduce((acc, row) => acc + Math.pow(row[col] - means[col], 2), 0) / data.length) || 1);
-      return data.map(row => row.map((val, col) => (val - means[col]) / stds[col]));
+      return { means, stds };
+    };
+
+    const normalizeWithStats = (data: any[][], means: number[], stds: number[]) => {
+      return data.map(row => row.map((val, col) => (val - (means[col] || 0)) / (stds[col] || 1)));
     };
     
-    const X_train_norm = normalize(X_train_raw);
-    const X_test_norm = normalize(X_test_raw);
+    const { means: trainMeans, stds: trainStds } = getStats(X_train_raw);
+    const X_train_norm = normalizeWithStats(X_train_raw, trainMeans, trainStds);
+    const X_test_norm = normalizeWithStats(X_test_raw, trainMeans, trainStds);
 
     // Unique classes
     const classes = Array.from(new Set([...y_train, ...y_test])).sort();
@@ -320,39 +331,34 @@ export default function App() {
       const testAccuracy = correct / X_test_norm.length;
       const logLoss = totalLogLoss / X_test_norm.length;
 
-      // Calculate Macro Precision, Recall, F1
+      // Calculate Macro Precision, Recall, F1 (Average of per-class metrics)
       let totalPrecision = 0;
       let totalRecall = 0;
-      let validPrecisionClasses = 0;
-      let validRecallClasses = 0;
+      let totalF1 = 0;
 
       for (let i = 0; i < numClasses; i++) {
         const tp = confusionMatrix[i][i];
         const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
         const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
 
-        const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-        const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+        const p = tp + fp > 0 ? tp / (tp + fp) : 0;
+        const r = tp + fn > 0 ? tp / (tp + fn) : 0;
+        const f = p + r > 0 ? (2 * p * r) / (p + r) : 0;
 
-        if (tp + fp > 0) {
-          totalPrecision += precision;
-          validPrecisionClasses++;
-        }
-        if (tp + fn > 0) {
-          totalRecall += recall;
-          validRecallClasses++;
-        }
+        totalPrecision += p;
+        totalRecall += r;
+        totalF1 += f;
       }
 
-      const precision = validPrecisionClasses > 0 ? totalPrecision / validPrecisionClasses : 0;
-      const recall = validRecallClasses > 0 ? totalRecall / validRecallClasses : 0;
-      const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+      const precision = totalPrecision / numClasses;
+      const recall = totalRecall / numClasses;
+      const f1Score = (precision + recall > 0) ? (2 * precision * recall) / (precision + recall) : 0;
 
       const executionTime = (Date.now() - startTime) / 1000;
       if (opt === 'SGD') sgdTime = executionTime;
 
       const meanLoss = metrics.reduce((s, x) => s + x.loss, 0) / metrics.length;
-      const aulc = metrics.reduce((acc, m) => acc + m.loss, 0);
+      const aulc = metrics.reduce((acc, m) => acc + m.accuracy, 0);
 
       // Convergence Rate relative to SGD
       // Formula: baseline_training_time / optimizer_training_time
@@ -415,8 +421,8 @@ export default function App() {
   const bestOptimizer = useMemo(() => {
     if (results.length === 0) return null;
     return results.reduce((prev, curr) => {
-      // Score: accuracy*40 + f1*30 + convergence*20 - time*10
-      const score = (res: ExperimentResult) => (res.testAccuracy * 40) + (res.f1Score * 30) + (res.convergenceRate * 20) - (res.executionTime * 10);
+      // Score: accuracy*40 + f1*40 + convergence*20
+      const score = (res: ExperimentResult) => (res.testAccuracy * 40) + (res.f1Score * 40) + (res.convergenceRate * 20);
       return score(curr) > score(prev) ? curr : prev;
     });
   }, [results]);
@@ -1048,35 +1054,35 @@ export default function App() {
                     <th className="px-6 py-4 font-semibold">Optimizer</th>
                     <th className="px-6 py-4 font-semibold">
                       Accuracy
-                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} />
+                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       F1 Score
-                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} />
+                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       Precision
-                      <InfoTooltip title="Precision (Macro)" content={METRICS_INFO['Precision (Macro)']} />
+                      <InfoTooltip title="Precision (Macro)" content={METRICS_INFO['Precision (Macro)']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       Recall
-                      <InfoTooltip title="Recall (Macro)" content={METRICS_INFO['Recall (Macro)']} />
+                      <InfoTooltip title="Recall (Macro)" content={METRICS_INFO['Recall (Macro)']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       Log Loss
-                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} />
+                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       Convergence
-                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} />
+                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
-                      Variance
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} />
+                      Loss Variance
+                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
                     </th>
                     <th className="px-6 py-4 font-semibold">
                       Time
-                      <InfoTooltip title="Execution Time" content={METRICS_INFO['Execution Time']} />
+                      <InfoTooltip title="Execution Time" content={METRICS_INFO['Execution Time']} position="bottom" />
                     </th>
                   </tr>
                 </thead>
@@ -1249,7 +1255,7 @@ export default function App() {
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-loss">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-1">
                       Loss & Accuracy
-                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} />
+                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} position="bottom" />
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1268,7 +1274,7 @@ export default function App() {
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-grads">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-1">
                       Gradients & Updates
-                      <InfoTooltip title="Gradient Norm" content={METRICS_INFO['Gradient Norm']} />
+                      <InfoTooltip title="Gradient Norm" content={METRICS_INFO['Gradient Norm']} position="bottom" />
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1290,35 +1296,35 @@ export default function App() {
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       F1 Score
-                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} />
+                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-blue-600">{safeFixed(selectedExperiment.f1_score, 2, 100, '%')}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Log Loss
-                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} />
+                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-rose-600">{safeFixed(selectedExperiment.log_loss, 4)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       AULC
-                      <InfoTooltip title="AULC" content={METRICS_INFO['AULC']} />
+                      <InfoTooltip title="AULC" content={METRICS_INFO['AULC']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-amber-600">{safeFixed(selectedExperiment.aulc, 2)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Loss Variance
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} />
+                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
                     </div>
                     <div className="text-xl font-black">{safeFixed(selectedExperiment.loss_variance, 6)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Conv. Rate
-                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} />
+                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-emerald-600">{safeFixed(selectedExperiment.convergence_rate, 2, 1, 'x')}</div>
                   </div>
@@ -1330,7 +1336,7 @@ export default function App() {
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2">
                       <TrendingDown className="w-4 h-4" /> 
                       Convergence Speed
-                      <InfoTooltip title="Convergence Speed" content={METRICS_INFO['Convergence Speed']} />
+                      <InfoTooltip title="Convergence Speed" content={METRICS_INFO['Convergence Speed']} position="bottom" />
                     </h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1348,7 +1354,7 @@ export default function App() {
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2">
                       <Activity className="w-4 h-4" /> 
                       Training Stability
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} />
+                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
                     </h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
