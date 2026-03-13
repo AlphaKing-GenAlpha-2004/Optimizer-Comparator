@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Target
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import { clsx, type ClassValue } from 'clsx';
@@ -517,41 +517,6 @@ export default function App() {
     });
 
     doc.save(`experiment_${exp.id}_report.pdf`);
-  };
-
-  const ConfusionMatrix = ({ matrix }: { matrix: number[][] }) => {
-    if (!matrix) return null;
-    const size = matrix.length;
-    const maxVal = Math.max(...matrix.flat());
-    const cellSize = size > 20 ? '12px' : size > 10 ? '20px' : '32px';
-    const fontSize = size > 20 ? '6px' : size > 10 ? '8px' : '10px';
-
-    return (
-      <div 
-        className="grid border border-[#E7E5E4] bg-[#E7E5E4] gap-px rounded overflow-hidden shadow-inner" 
-        style={{ 
-          gridTemplateColumns: `repeat(${size}, minmax(${cellSize}, 1fr))`,
-          width: 'fit-content'
-        }}
-      >
-        {matrix.map((row, i) => row.map((val, j) => (
-          <div 
-            key={`${i}-${j}`}
-            className="aspect-square flex items-center justify-center font-bold transition-colors hover:brightness-90"
-            style={{ 
-              backgroundColor: `rgba(5, 150, 105, ${val / maxVal || 0.05})`,
-              color: val / maxVal > 0.5 ? 'white' : '#1C1917',
-              fontSize: fontSize,
-              width: cellSize,
-              height: cellSize
-            }}
-            title={`True: ${i}, Pred: ${j}, Count: ${val}`}
-          >
-            {size <= 15 ? val : (val > 0 ? '•' : '')}
-          </div>
-        )))}
-      </div>
-    );
   };
 
   const chartData = useMemo(() => {
@@ -1235,13 +1200,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-8">
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
-                    <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Target className="w-4 h-4" /> Confusion Matrix</h4>
-                    <div className="h-48 overflow-auto flex items-center justify-center bg-[#FAFAFA] rounded-xl border border-[#F5F5F4] p-4 custom-scrollbar">
-                      <ConfusionMatrix matrix={selectedExperiment.confusion_matrix} />
-                    </div>
-                  </div>
+                <div className="grid grid-cols-1 gap-8">
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Zap className="w-4 h-4" /> Optimization Dynamics</h4>
                     <div className="h-48">
