@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, Cell, ScatterChart, Scatter, ZAxis, AreaChart, Area
@@ -392,7 +393,7 @@ export default function App() {
     }
   };
 
-  const downloadReport = (exp: any) => {
+  const downloadReport = async (exp: any) => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -452,8 +453,48 @@ export default function App() {
       headStyles: { fillColor: [120, 113, 108] }
     });
 
+    // Add Charts Section
+    doc.addPage();
+    doc.setFontSize(18);
+    doc.text("Visual Analysis", 14, 22);
+
+    const captureChart = async (id: string) => {
+      const element = document.getElementById(id);
+      if (element) {
+        const canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+        return canvas.toDataURL('image/png');
+      }
+      return null;
+    };
+
+    const chartIds = [
+      { id: 'report-chart-loss', title: 'Loss & Accuracy' },
+      { id: 'report-chart-grads', title: 'Gradients & Updates' },
+      { id: 'report-chart-speed', title: 'Convergence Speed' },
+      { id: 'report-chart-stability', title: 'Training Stability' }
+    ];
+
+    let currentY = 35;
+    for (const chart of chartIds) {
+      const imgData = await captureChart(chart.id);
+      if (imgData) {
+        if (currentY + 80 > 280) {
+          doc.addPage();
+          currentY = 20;
+        }
+        doc.setFontSize(12);
+        doc.text(chart.title, 14, currentY);
+        doc.addImage(imgData, 'PNG', 14, currentY + 5, 180, 70);
+        currentY += 85;
+      }
+    }
+
     // Epoch Details (New Page if needed)
-    const finalY2 = (doc as any).lastAutoTable.finalY;
     doc.addPage();
     doc.setFontSize(16);
     doc.text("Epoch-by-Epoch Training Logs", 14, 22);
@@ -1108,7 +1149,7 @@ export default function App() {
 
                 {/* Graphs */}
                 <div className="grid grid-cols-2 gap-8">
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-loss">
                     <h4 className="font-bold mb-4 text-sm">Loss & Accuracy</h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1124,7 +1165,7 @@ export default function App() {
                       </ResponsiveContainer>
                     </div>
                   </div>
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-grads">
                     <h4 className="font-bold mb-4 text-sm">Gradients & Updates</h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1163,7 +1204,7 @@ export default function App() {
 
                 {/* Advanced Visualizations */}
                 <div className="grid grid-cols-2 gap-8">
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-speed">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><TrendingDown className="w-4 h-4" /> Convergence Speed</h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1177,7 +1218,7 @@ export default function App() {
                       </ResponsiveContainer>
                     </div>
                   </div>
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-stability">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2"><Activity className="w-4 h-4" /> Training Stability</h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
