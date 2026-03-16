@@ -27,6 +27,8 @@ db.exec(`
     confusion_matrix TEXT,
     log_loss REAL,
     convergence_rate REAL,
+    training_time REAL,
+    testing_time REAL,
     execution_time REAL,
     aulc REAL,
     loss_variance REAL,
@@ -35,6 +37,23 @@ db.exec(`
   )
 `);
 
+// Migration: Add missing columns if they don't exist
+const tableInfo = db.prepare("PRAGMA table_info(experiments)").all() as any[];
+const columnNames = tableInfo.map(c => c.name);
+
+if (!columnNames.includes('training_time')) {
+  db.exec("ALTER TABLE experiments ADD COLUMN training_time REAL");
+}
+if (!columnNames.includes('testing_time')) {
+  db.exec("ALTER TABLE experiments ADD COLUMN testing_time REAL");
+}
+if (!columnNames.includes('aulc')) {
+  db.exec("ALTER TABLE experiments ADD COLUMN aulc REAL");
+}
+if (!columnNames.includes('loss_variance')) {
+  db.exec("ALTER TABLE experiments ADD COLUMN loss_variance REAL");
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -42,7 +61,7 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   // API Routes
-  app.get('/api/history', (req, res) => {
+  app.get('/api/experiments', (req, res) => {
     try {
       const rows = db.prepare('SELECT id, dataset_name, optimizer, test_accuracy, execution_time, timestamp FROM experiments ORDER BY timestamp DESC LIMIT 50').all();
       res.json(rows);
@@ -68,7 +87,7 @@ async function startServer() {
       dataset_name, sample_size, train_test_split, optimizer, 
       hidden_size, learning_rate, epochs, batch_size,
       test_accuracy, precision, recall, f1_score, confusion_matrix,
-      log_loss, convergence_rate, execution_time, aulc, loss_variance, logs 
+      log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance, logs 
     } = req.body;
     try {
       const stmt = db.prepare(`
@@ -76,16 +95,16 @@ async function startServer() {
           dataset_name, sample_size, train_test_split, optimizer, 
           hidden_size, learning_rate, epochs, batch_size,
           test_accuracy, precision, recall, f1_score, confusion_matrix,
-          log_loss, convergence_rate, execution_time, aulc, loss_variance, logs
+          log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance, logs
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       stmt.run(
         dataset_name, sample_size, train_test_split, optimizer, 
         hidden_size, learning_rate, epochs, batch_size,
         test_accuracy, precision, recall, f1_score, 
         typeof confusion_matrix === 'string' ? confusion_matrix : JSON.stringify(confusion_matrix),
-        log_loss, convergence_rate, execution_time, aulc, loss_variance,
+        log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance,
         typeof logs === 'string' ? logs : JSON.stringify(logs)
       );
       res.json({ success: true });

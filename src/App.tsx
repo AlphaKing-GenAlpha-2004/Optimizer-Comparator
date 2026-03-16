@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, HelpCircle
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, HelpCircle, Grid3X3
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import { clsx, type ClassValue } from 'clsx';
@@ -46,21 +46,100 @@ const METRICS_INFO = {
   'Convergence Rate': 'Measures the efficiency of an optimizer relative to a baseline optimizer (SGD) in reaching a stable loss.'
 };
 
-const InfoTooltip = ({ title, content, position = 'top' }: { title: string, content: string, position?: 'top' | 'bottom' }) => (
-  <div className="group relative inline-block ml-1 align-middle">
-    <Info className="w-4 h-4 text-[#A8A29E] hover:text-[#1C1917] cursor-help transition-colors" />
-    <div className={cn(
-      "absolute left-1/2 -translate-x-1/2 hidden group-hover:block w-64 p-3 bg-[#1C1917] text-white text-[11px] rounded-xl shadow-2xl z-[100] animate-in fade-in zoom-in-95 duration-200",
-      position === 'top' ? "bottom-full mb-2" : "top-full mt-2"
-    )}>
-      <div className="font-bold mb-1 text-emerald-400">{title}</div>
-      <div className="leading-relaxed opacity-90">{content}</div>
-      <div className={cn(
-        "absolute left-1/2 -translate-x-1/2 border-8 border-transparent",
-        position === 'top' ? "top-full border-t-[#1C1917]" : "bottom-full border-b-[#1C1917]"
-      )} />
-    </div>
-  </div>
+const HelpModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => (
+  <AnimatePresence>
+    {isOpen && (
+      <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border border-[#E7E5E4] max-h-[80vh] flex flex-col"
+        >
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-bold flex items-center gap-2">
+              <HelpCircle className="w-6 h-6 text-emerald-600" />
+              Metrics & Optimizers Guide
+            </h3>
+            <button 
+              onClick={onClose}
+              className="p-2 hover:bg-[#F5F5F4] rounded-full transition-colors"
+            >
+              <Scissors className="w-5 h-5 rotate-90 text-[#78716C]" />
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto pr-4 space-y-8 custom-scrollbar">
+            <section>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Core Performance Metrics</h4>
+              <div className="grid gap-6">
+                <div>
+                  <div className="font-bold text-sm mb-1">Accuracy</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Percentage of correct predictions. Calculated as correct predictions divided by total samples.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Precision</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Ratio of correctly predicted positive observations to total predicted positives. Measures the "quality" of positive predictions.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Recall</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Ratio of correctly predicted positives to all actual positives. Measures the model's ability to find all positive samples.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">F1 Score</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Harmonic mean of precision and recall. Provides a balanced measure, especially useful for imbalanced datasets.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Log Loss</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Measures prediction uncertainty using cross-entropy loss. Lower values indicate more confident and accurate predictions.</div>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Training Dynamics</h4>
+              <div className="grid gap-6">
+                <div>
+                  <div className="font-bold text-sm mb-1">Convergence</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Relative speed at which the optimizer reaches a stable loss. Higher values indicate more efficient optimization.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Loss Variance</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Variation in training loss across epochs. High variance may suggest unstable optimization or an overly high learning rate.</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Execution Time</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">Total time required to complete model training in the browser environment.</div>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Optimizers</h4>
+              <div className="grid gap-6">
+                <div>
+                  <div className="font-bold text-sm mb-1">SGD</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['SGD']}</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Adam</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['Adam']}</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">Adagrad</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['Adagrad']}</div>
+                </div>
+                <div>
+                  <div className="font-bold text-sm mb-1">RMSProp</div>
+                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['RMSProp']}</div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
 );
 
 export default function App() {
@@ -90,6 +169,45 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [selectedExperiment, setSelectedExperiment] = useState<any>(null);
   const [isViewingReport, setIsViewingReport] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
+  const [results, setResults] = useState<ExperimentResult[]>([]);
+  const [optimizerProgress, setOptimizerProgress] = useState<Record<string, { epoch: number, trainProgress: number, testProgress: number }>>({
+    SGD: { epoch: 0, trainProgress: 0, testProgress: 0 },
+    Adam: { epoch: 0, trainProgress: 0, testProgress: 0 },
+    Adagrad: { epoch: 0, trainProgress: 0, testProgress: 0 },
+    RMSProp: { epoch: 0, trainProgress: 0, testProgress: 0 }
+  });
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [history, setHistory] = useState<any[]>([]);
+  const [currentOptimizer, setCurrentOptimizer] = useState<OptimizerType | null>(null);
+  const [currentEpoch, setCurrentEpoch] = useState(0);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch('/api/experiments');
+      const data = await res.json();
+      setHistory(data);
+    } catch (e) {
+      console.error('Failed to fetch history', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  useEffect(() => {
+    let interval: any;
+    if (isTraining) {
+      interval = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isTraining]);
 
   const safeFixed = (val: any, digits: number = 2, multiplier: number = 1, suffix: string = '') => {
     if (val === undefined || val === null || isNaN(Number(val))) return 'N/A';
@@ -105,326 +223,416 @@ export default function App() {
     isPausedRef.current = false;
   };
 
-  const [currentOptimizer, setCurrentOptimizer] = useState<OptimizerType | null>(null);
-  const [currentEpoch, setCurrentEpoch] = useState(0);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [results, setResults] = useState<ExperimentResult[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
-
-  // Timer effect
-  useEffect(() => {
-    let interval: any;
-    if (isTraining && !isPaused) {
-      interval = setInterval(() => setElapsedTime(prev => prev + 1), 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isTraining, isPaused]);
+  const clearData = () => {
+    setTrainData([]);
+    setTestData([]);
+    setTrainTensors(null);
+    setTestTensors(null);
+    setTrainFile(null);
+    setTestFile(null);
+    setFeatures([]);
+    setTarget('');
+    setResults([]);
+    setStatusMessage('Memory cleared.');
+  };
 
   const togglePause = () => {
-    const nextState = !isPaused;
-    setIsPaused(nextState);
-    isPausedRef.current = nextState;
+    setIsPaused(!isPaused);
+    isPausedRef.current = !isPausedRef.current;
   };
 
-  const checkPause = async () => {
-    while (isPausedRef.current) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+  const [trainTensors, setTrainTensors] = useState<{ X: Float32Array, y: Int32Array } | null>(null);
+  const [testTensors, setTestTensors] = useState<{ X: Float32Array, y: Int32Array } | null>(null);
+  const [classes, setClasses] = useState<string[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showWarning, setShowWarning] = useState(false);
+  const workersRef = useRef<Worker[]>([]);
+  const timeoutRef = useRef<any>(null);
+
+  const getDynamicBatchSize = (samples: number) => {
+    if (samples < 10000) return 128;
+    if (samples < 50000) return 256;
+    return 512;
   };
 
-  // Load History
-  const fetchHistory = async () => {
-    try {
-      const res = await fetch('/api/history');
-      const data = await res.json();
-      setHistory(data);
-    } catch (e) {
-      console.error('Failed to fetch history', e);
+  // Re-process files when sample size sliders are adjusted
+  useEffect(() => {
+    if (trainFile) {
+      processFile(trainFile, 'train');
     }
-  };
+  }, [trainSampleSize]);
 
   useEffect(() => {
-    fetchHistory();
-  }, []);
+    if (testFile) {
+      processFile(testFile, 'test');
+    }
+  }, [testSampleSize]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'train' | 'test') => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'train' | 'test') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (type === 'train') setTrainFile(file);
     else setTestFile(file);
 
+    processFile(file, type);
+  };
+
+  const processFile = async (file: File, type: 'train' | 'test') => {
+    setIsProcessing(true);
+    setError(null);
+    setParseProgress(0);
+    setStatusMessage(`Parsing ${file.name}...`);
+
+    const maxSamples = type === 'train' ? trainSampleSize : testSampleSize;
+    const tempRows: any[] = [];
+    let rowCount = 0;
+    let featCols: string[] = [];
+    let targetCol = "";
+    
+    // Reset classes if it's a new training file to prevent pollution
+    // If it's a test file, we MUST use the classes from the training file
+    let currentClasses: Set<string> = type === 'train' ? new Set<string>() : new Set<string>(classes);
+    
+    let X: Float32Array | null = null;
+    let y: Int32Array | null = null;
+
+    const rawTargets: string[] = [];
+
     Papa.parse(file, {
       header: true,
       dynamicTyping: true,
       skipEmptyLines: true,
-      preview: 100, // Preview for UI
-      worker: true, // Use worker for large files
-      complete: (results) => {
-        if (type === 'train') {
-          setTrainData(results.data);
-          const cols = Object.keys(results.data[0] || {});
-          setFeatures(cols.slice(0, -1));
-          setTarget(cols[cols.length - 1] || '');
-        } else {
-          setTestData(results.data);
+      worker: true,
+      step: (results, parser) => {
+        const row = results.data;
+        if (rowCount === 0) {
+          const cols = Object.keys(row || {});
+          if (cols.length < 2) {
+            setError("Dataset must have at least one feature and one target column.");
+            parser.abort();
+            setIsProcessing(false);
+            return;
+          }
+          featCols = cols.slice(0, -1);
+          targetCol = cols[cols.length - 1];
+          
+          if (type === 'train') {
+            setFeatures(featCols);
+            setTarget(targetCol);
+          }
+
+          X = new Float32Array(maxSamples * featCols.length);
+          y = new Int32Array(maxSamples);
         }
+
+        if (rowCount < maxSamples) {
+          // Store first 10 rows for preview
+          if (rowCount < 10) {
+            const previewRow: any = {};
+            const previewCols = featCols.slice(0, 20);
+            previewCols.forEach(c => previewRow[c] = row[c]);
+            previewRow[targetCol] = row[targetCol];
+            tempRows.push(previewRow);
+          }
+
+          // Process for TypedArrays
+          featCols.forEach((f, j) => {
+            let val = Number(row[f]) || 0;
+            if (val > 1) val /= 255; 
+            if (X) X[rowCount * featCols.length + j] = val;
+          });
+
+          const targetVal = String(row[targetCol]);
+          if (type === 'train') {
+            currentClasses.add(targetVal);
+          }
+          rawTargets.push(targetVal);
+        }
+
+        rowCount++;
+        if (rowCount % 1000 === 0) {
+          const progress = Math.min(99, (rowCount / maxSamples) * 100);
+          setParseProgress(progress);
+          setStatusMessage(`Parsing ${file.name}... ${rowCount.toLocaleString()} rows`);
+        }
+        
+        if (rowCount >= maxSamples) {
+          parser.abort();
+        }
+      },
+      complete: () => {
+        setParseProgress(100);
+        if (rowCount === 0) {
+          setError("The dataset is empty.");
+          setIsProcessing(false);
+          return;
+        }
+
+        let finalClasses: string[] = [];
+        if (type === 'train') {
+          finalClasses = Array.from(currentClasses).sort();
+          setClasses(finalClasses);
+        } else {
+          finalClasses = classes;
+          if (finalClasses.length === 0) {
+            setError("Please upload a training dataset first to define the classes.");
+            setIsProcessing(false);
+            return;
+          }
+        }
+
+        const classMap = new Map(finalClasses.map((c, i) => [c, i]));
+
+        // Map raw targets to indices
+        if (y) {
+          rawTargets.forEach((t, i) => {
+            y![i] = classMap.has(t) ? classMap.get(t)! : 0;
+          });
+        }
+
+        // Fisher-Yates Shuffle to prevent class imbalance from sorted datasets
+        if (X && y && rowCount > 0) {
+          const featCount = featCols.length;
+          for (let i = rowCount - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            
+            // Swap y[i] and y[j]
+            const tempY = y[i];
+            y[i] = y[j];
+            y[j] = tempY;
+            
+            // Swap X rows i and j
+            for (let k = 0; k < featCount; k++) {
+              const tempX = X[i * featCount + k];
+              X[i * featCount + k] = X[j * featCount + k];
+              X[j * featCount + k] = tempX;
+            }
+          }
+        }
+
+        if (type === 'train') {
+          setTrainData(tempRows);
+          setTrainTensors({ 
+            X: X!.slice(0, rowCount * featCols.length), 
+            y: y!.slice(0, rowCount) 
+          });
+          if (rowCount >= 100000) setShowWarning(true);
+        } else {
+          setTestData(tempRows);
+          setTestTensors({ 
+            X: X!.slice(0, rowCount * featCols.length), 
+            y: y!.slice(0, rowCount) 
+          });
+        }
+
+        setIsProcessing(false);
+        setStatusMessage(`${file.name} processed (${rowCount} rows).`);
       }
     });
   };
 
   const startTraining = async () => {
-    if (!trainFile || !testFile || !target) return;
+    if (!trainTensors || !testTensors || !target) {
+      setError("Please upload both training and testing datasets first.");
+      return;
+    }
+
+    if (params.hiddenSize < 1 || params.hiddenSize > 512) {
+      setError("Hidden layer size must be between 1 and 512.");
+      return;
+    }
+
+    if (params.learningRate <= 0 || params.learningRate > 1) {
+      setError("Learning rate must be between 0 and 1.");
+      return;
+    }
+
+    if (params.epochs < 1 || params.epochs > 100) {
+      setError("Number of epochs must be between 1 and 100.");
+      return;
+    }
+    
     setIsTraining(true);
+    setError(null);
     setIsPaused(false);
     isPausedRef.current = false;
     stopTrainingRef.current = false;
     setResults([]);
-    
-    // Load full data with sampling
-    const loadAndSample = (file: File, size: number) => {
-      return new Promise<any[]>((resolve) => {
-        setStatusMessage(`Loading and sampling ${file.name}...`);
-        Papa.parse(file, {
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          worker: true,
-          complete: (results) => {
-            const data = results.data;
-            const sampled = data.sort(() => 0.5 - Math.random()).slice(0, size);
-            resolve(sampled);
-          }
-        });
-      });
-    };
-
-    const fullTrain = await loadAndSample(trainFile, trainSampleSize);
-    const fullTest = await loadAndSample(testFile, testSampleSize);
-
-    // Prepare data
-    const X_train_raw = fullTrain.map(row => features.map(f => Number(row[f]) || 0));
-    const y_train = fullTrain.map(row => row[target]);
-    const X_test_raw = fullTest.map(row => features.map(f => Number(row[f]) || 0));
-    const y_test = fullTest.map(row => row[target]);
-
-    const getStats = (data: any[][]) => {
-      if (data.length === 0) return { means: [], stds: [] };
-      const means = data[0].map((_, col) => data.reduce((acc, row) => acc + row[col], 0) / data.length);
-      const stds = data[0].map((_, col) => Math.sqrt(data.reduce((acc, row) => acc + Math.pow(row[col] - means[col], 2), 0) / data.length) || 1);
-      return { means, stds };
-    };
-
-    const normalizeWithStats = (data: any[][], means: number[], stds: number[]) => {
-      return data.map(row => row.map((val, col) => (val - (means[col] || 0)) / (stds[col] || 1)));
-    };
-    
-    const { means: trainMeans, stds: trainStds } = getStats(X_train_raw);
-    const X_train_norm = normalizeWithStats(X_train_raw, trainMeans, trainStds);
-    const X_test_norm = normalizeWithStats(X_test_raw, trainMeans, trainStds);
-
-    // Unique classes
-    const classes = Array.from(new Set([...y_train, ...y_test])).sort();
-    const classMap = new Map(classes.map((c, i) => [c, i]));
-    const y_train_idx = y_train.map(v => classMap.get(v) || 0);
-    const y_test_idx = y_test.map(v => classMap.get(v) || 0);
+    setElapsedTime(0);
+    setOptimizerProgress({
+      SGD: { epoch: 0, trainProgress: 0, testProgress: 0 },
+      Adam: { epoch: 0, trainProgress: 0, testProgress: 0 },
+      Adagrad: { epoch: 0, trainProgress: 0, testProgress: 0 },
+      RMSProp: { epoch: 0, trainProgress: 0, testProgress: 0 }
+    });
 
     const optimizers: OptimizerType[] = ['SGD', 'Adagrad', 'RMSProp', 'Adam'];
     const allResults: ExperimentResult[] = [];
-    let sgdTime = 0;
+    const cores = navigator.hardwareConcurrency || 4;
+    let batchSize = params.batchSize || getDynamicBatchSize(trainTensors.y.length);
+    let epochs = params.epochs;
 
-    for (const opt of optimizers) {
-      if (stopTrainingRef.current) break;
-      setCurrentOptimizer(opt);
-      setTrainingProgress(0);
-      setTestingProgress(0);
-      setIsTesting(false);
-      setElapsedTime(0); // Reset timer for each optimizer
-      
-      const startTime = Date.now();
-      const nn = new NeuralNetwork(features.length, params.hiddenSize, classes.length);
-      const metrics: TrainingMetric[] = [];
-
-      for (let epoch = 1; epoch <= params.epochs; epoch++) {
-        await checkPause();
-        if (stopTrainingRef.current) break;
-
-        setCurrentEpoch(epoch);
-        setStatusMessage(`Training ${opt}: Epoch ${epoch}/${params.epochs}`);
-        let totalLoss = 0;
-        let totalGradNorm = 0;
-        let totalUpdateNorm = 0;
-        let batchCount = 0;
-        
-        // Mini-batch training
-        for (let i = 0; i < X_train_norm.length; i += params.batchSize) {
-          await checkPause();
-          if (stopTrainingRef.current) break;
-
-          const batchX = X_train_norm.slice(i, i + params.batchSize);
-          const batchY = y_train_idx.slice(i, i + params.batchSize);
-          
-          const { gradNorm, updateNorm } = nn.trainStep(batchX, batchY, params.learningRate, opt);
-          const { a2 } = nn.forward(batchX);
-          totalLoss += nn.computeLoss(a2, batchY);
-          totalGradNorm += gradNorm;
-          totalUpdateNorm += updateNorm;
-          batchCount++;
-          
-          setTrainingProgress(((epoch - 1) * X_train_norm.length + i + batchX.length) / (params.epochs * X_train_norm.length) * 100);
-        }
-
-        if (stopTrainingRef.current) break;
-
-        const avgLoss = totalLoss / batchCount;
-        // Fast evaluation on a subset for training metrics to keep UI responsive
-        const trainEval = nn.evaluate(X_train_norm.slice(0, 1000), y_train_idx.slice(0, 1000));
-        const accuracy = trainEval.accuracy;
-        
-        metrics.push({
-          epoch,
-          loss: avgLoss,
-          accuracy,
-          gradientNorm: totalGradNorm / batchCount,
-          updateRatio: totalUpdateNorm / batchCount,
-          convergenceSpeed: metrics.length > 0 ? Math.abs(metrics[metrics.length - 1].loss - avgLoss) : 0
-        });
-
-        // Yield to UI
-        await new Promise(r => setTimeout(r, 0));
-      }
-
-      if (stopTrainingRef.current) break;
-
-      setIsTesting(true);
-      setStatusMessage(`Testing ${opt} performance...`);
-      
-      // Batch-wise evaluation to show progress
-      const testBatchSize = 500;
-      let correct = 0;
-      let totalLogLoss = 0;
-      const numClasses = classes.length;
-      const confusionMatrix = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
-
-      for (let i = 0; i < X_test_norm.length; i += testBatchSize) {
-        await checkPause();
-        if (stopTrainingRef.current) break;
-
-        const batchX = X_test_norm.slice(i, i + testBatchSize);
-        const batchY = y_test_idx.slice(i, i + testBatchSize);
-        
-        const { a2 } = nn.forward(batchX);
-        a2.forEach((pred: any, idx: number) => {
-          const predLabel = pred.indexOf(Math.max(...pred));
-          const trueLabel = batchY[idx];
-          confusionMatrix[trueLabel][predLabel]++;
-          if (predLabel === trueLabel) correct++;
-          totalLogLoss -= Math.log(pred[trueLabel] + 1e-15);
-        });
-
-        setTestingProgress(((i + batchX.length) / X_test_norm.length) * 100);
-        await new Promise(r => setTimeout(r, 0));
-      }
-
-      if (stopTrainingRef.current) break;
-
-      const testAccuracy = correct / X_test_norm.length;
-      const logLoss = totalLogLoss / X_test_norm.length;
-
-      // Calculate Macro Precision, Recall, F1 (Average of per-class metrics)
-      let totalPrecision = 0;
-      let totalRecall = 0;
-      let totalF1 = 0;
-
-      for (let i = 0; i < numClasses; i++) {
-        const tp = confusionMatrix[i][i];
-        const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
-        const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
-
-        const p = tp + fp > 0 ? tp / (tp + fp) : 0;
-        const r = tp + fn > 0 ? tp / (tp + fn) : 0;
-        const f = p + r > 0 ? (2 * p * r) / (p + r) : 0;
-
-        totalPrecision += p;
-        totalRecall += r;
-        totalF1 += f;
-      }
-
-      const precision = totalPrecision / numClasses;
-      const recall = totalRecall / numClasses;
-      const f1Score = (precision + recall > 0) ? (2 * precision * recall) / (precision + recall) : 0;
-
-      const executionTime = (Date.now() - startTime) / 1000;
-      if (opt === 'SGD') sgdTime = executionTime;
-
-      const meanLoss = metrics.reduce((s, x) => s + x.loss, 0) / metrics.length;
-      const aulc = metrics.reduce((acc, m) => acc + m.accuracy, 0);
-
-      // Convergence Rate relative to SGD
-      // Formula: baseline_training_time / optimizer_training_time
-      // We use a small epsilon to avoid division by zero
-      const convergenceRate = opt === 'SGD' ? 1 : (sgdTime / (executionTime + 1e-8));
-
-      const result: ExperimentResult = {
-        optimizer: opt,
-        metrics,
-        testAccuracy,
-        precision,
-        recall,
-        f1Score,
-        confusionMatrix,
-        logLoss,
-        executionTime,
-        convergenceRate: Math.min(Math.max(convergenceRate, 0.1), 20), // Clamping to realistic range
-        lossVariance: metrics.reduce((acc, m) => acc + Math.pow(m.loss - meanLoss, 2), 0) / metrics.length,
-        aulc
-      };
-
-      allResults.push(result);
-      setResults([...allResults]);
-
-      // Save to DB
-      await fetch('/api/experiments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataset_name: trainFile.name,
-          sample_size: trainSampleSize,
-          train_test_split: (trainSampleSize / (trainSampleSize + testSampleSize)) * 100,
-          optimizer: opt,
-          hidden_size: params.hiddenSize,
-          learning_rate: params.learningRate,
-          epochs: params.epochs,
-          batch_size: params.batchSize,
-          test_accuracy: testAccuracy,
-          precision,
-          recall,
-          f1_score: f1Score,
-          confusion_matrix: confusionMatrix,
-          log_loss: logLoss,
-          convergence_rate: result.convergenceRate,
-          execution_time: executionTime,
-          aulc,
-          loss_variance: result.lossVariance,
-          logs: metrics
-        })
-      });
+    // Auto Performance Mode (Step 9)
+    if (trainTensors.y.length > 50000) {
+      batchSize = Math.max(batchSize, 256);
+      epochs = Math.min(epochs, 8);
+      setStatusMessage(`Auto Performance Mode: Batch size ${batchSize}, Epochs ${epochs}`);
+    } else {
+      setStatusMessage(`Starting parallel training on ${cores} cores...`);
     }
 
-    setIsTraining(false);
-    setIsTesting(false);
-    setCurrentOptimizer(null);
-    setStatusMessage('Experiment complete.');
-    fetchHistory();
+    // Global timeout safety (60,000 seconds)
+    const MAX_TRAINING_TIME = 60000000;
+    timeoutRef.current = setTimeout(() => {
+      stopTraining();
+      setStatusMessage("Training stopped due to computational limits (60000s).");
+    }, MAX_TRAINING_TIME);
+
+    const runOptimizer = (opt: OptimizerType): Promise<ExperimentResult> => {
+      return new Promise((resolve, reject) => {
+        const worker = new Worker(new URL('./training-worker.ts', import.meta.url), { type: 'module' });
+        workersRef.current.push(worker);
+
+        // Per-worker watchdog timer
+        let watchdog: any;
+        const resetWatchdog = () => {
+          if (watchdog) clearTimeout(watchdog);
+          watchdog = setTimeout(() => {
+            worker.terminate();
+            reject(new Error(`Optimizer ${opt} timed out (no progress for 300s).`));
+          }, 300000); // 300 seconds of inactivity
+        };
+
+        resetWatchdog();
+
+        worker.onmessage = (e) => {
+          resetWatchdog();
+          const { type, optimizer, epoch, trainProgress, testProgress, metrics: result } = e.data;
+          
+          if (type === 'progress') {
+            setOptimizerProgress(prev => ({
+              ...prev,
+              [optimizer]: { epoch, trainProgress, testProgress }
+            }));
+          } else if (type === 'training_complete') {
+            clearTimeout(watchdog);
+            worker.terminate();
+            resolve(result);
+          } else if (type === 'timeout') {
+            clearTimeout(watchdog);
+            worker.terminate();
+            reject(new Error(`Optimizer ${optimizer} timed out.`));
+          } else if (type === 'error') {
+            clearTimeout(watchdog);
+            worker.terminate();
+            const errMsg = e.data.message || `An error occurred in ${optimizer} worker.`;
+            setError(errMsg);
+            reject(new Error(errMsg));
+          }
+        };
+
+        worker.onerror = (err) => {
+          console.error("Worker Error:", err);
+          clearTimeout(watchdog);
+          worker.terminate();
+          reject(new Error(`Worker crash: ${err.message}`));
+        };
+
+        // Transfer buffers to worker (Step 7)
+        // We clone for the first 3 and transfer for the last one to reuse memory efficiently
+        const isLast = opt === 'Adam'; // Adam is usually last in the list
+        
+        const X_train_buf = isLast ? trainTensors.X : new Float32Array(trainTensors.X);
+        const y_train_buf = isLast ? trainTensors.y : new Int32Array(trainTensors.y);
+        const X_test_buf = isLast ? testTensors.X : new Float32Array(testTensors.X);
+        const y_test_buf = isLast ? testTensors.y : new Int32Array(testTensors.y);
+
+        worker.postMessage({
+          optimizer: opt,
+          hiddenSize: params.hiddenSize,
+          learningRate: params.learningRate,
+          epochs: epochs,
+          batchSize: batchSize,
+          inputSize: features.length,
+          outputSize: classes.length,
+          X_train: X_train_buf,
+          y_train: y_train_buf,
+          X_test: X_test_buf,
+          y_test: y_test_buf,
+          trainSamples: trainTensors.y.length,
+          testSamples: testTensors.y.length
+        }, [X_train_buf.buffer, y_train_buf.buffer, X_test_buf.buffer, y_test_buf.buffer]);
+      });
+    };
+
+    // Execution Strategy: Spawn all simultaneously (Step 6)
+    setStatusMessage(`Spawning all optimizers in parallel...`);
+    
+    try {
+      const results = await Promise.all(optimizers.map(opt => runOptimizer(opt)));
+      setResults(results);
+      
+      // Save all results to DB
+      for (const res of results) {
+        await fetch('/api/experiments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataset_name: trainFile?.name,
+            sample_size: trainTensors.y.length,
+            train_test_split: (trainTensors.y.length / (trainTensors.y.length + testTensors.y.length)) * 100,
+            optimizer: res.optimizer,
+            hidden_size: params.hiddenSize,
+            learning_rate: params.learningRate,
+            epochs: params.epochs,
+            batch_size: batchSize,
+            test_accuracy: res.testAccuracy,
+            precision: res.precision,
+            recall: res.recall,
+            f1_score: res.f1Score,
+            confusion_matrix: JSON.stringify(res.confusionMatrix),
+            log_loss: res.logLoss,
+            convergence_rate: res.convergenceRate,
+            training_time: res.trainingTime,
+            testing_time: res.testingTime,
+            execution_time: res.executionTime,
+            aulc: res.aulc,
+            loss_variance: res.lossVariance,
+            logs: JSON.stringify(res.metrics)
+          })
+        });
+      }
+      
+      setStatusMessage("Parallel training complete.");
+    } catch (err: any) {
+      console.error("Training failed:", err);
+      setError(err.message);
+    } finally {
+      setIsTraining(false);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      fetchHistory();
+    }
   };
 
   const bestOptimizer = useMemo(() => {
     if (results.length === 0) return null;
-    return results.reduce((prev, curr) => {
-      // Score: accuracy*40 + f1*40 + convergence*20
-      const score = (res: ExperimentResult) => (res.testAccuracy * 40) + (res.f1Score * 40) + (res.convergenceRate * 20);
-      return score(curr) > score(prev) ? curr : prev;
+
+    const sorted = [...results].sort((a, b) => {
+      if (b.testAccuracy !== a.testAccuracy)
+        return b.testAccuracy - a.testAccuracy;
+
+      if (a.logLoss !== b.logLoss)
+        return a.logLoss - b.logLoss;
+
+      if (b.convergenceRate !== a.convergenceRate)
+        return b.convergenceRate - a.convergenceRate;
+
+      return a.trainingTime - b.trainingTime;
     });
+
+    return sorted[0];
   }, [results]);
 
   const fetchExperimentDetails = async (id: number) => {
@@ -624,6 +832,13 @@ export default function App() {
     return data;
   }, [results]);
 
+  const overallProgress = useMemo(() => {
+    const total = (Object.values(optimizerProgress) as any[]).reduce((acc: number, curr: any) => {
+      return acc + (curr.trainProgress + curr.testProgress) / 2;
+    }, 0);
+    return (total as number) / 4;
+  }, [optimizerProgress]);
+
   return (
     <div className="min-h-screen bg-[#F5F5F4] text-[#1C1917] font-sans flex">
       {/* Sidebar */}
@@ -669,19 +884,25 @@ export default function App() {
           </div>
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="block text-[11px] font-medium">Training Samples: {trainSampleSize.toLocaleString()}</label>
+              <div className="flex justify-between text-[11px] font-medium">
+                <span>Training Samples</span>
+                <span className="text-[#78716C]">{trainSampleSize.toLocaleString()}</span>
+              </div>
               <input 
-                type="range" min="2000" max="500000" step="1000" value={trainSampleSize}
+                type="range" min="1000" max="100000" step="1000" value={trainSampleSize}
                 onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
-                <span>2k</span>
-                <span>500k</span>
+                <span>1k</span>
+                <span>100k</span>
               </div>
             </div>
             <div className="space-y-2">
-              <label className="block text-[11px] font-medium">Testing Samples: {testSampleSize.toLocaleString()}</label>
+              <div className="flex justify-between text-[11px] font-medium">
+                <span>Testing Samples</span>
+                <span className="text-[#78716C]">{testSampleSize.toLocaleString()}</span>
+              </div>
               <input 
                 type="range" min="500" max="50000" step="500" value={testSampleSize}
                 onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
@@ -749,31 +970,42 @@ export default function App() {
           </div>
         </section>
 
-        <div className="flex gap-3 mt-auto">
-          {isTraining ? (
+        <div className="flex flex-col gap-3 mt-auto">
+          <div className="flex gap-3">
+            {isTraining ? (
+              <button 
+                onClick={stopTraining}
+                className="flex-1 bg-red-600 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
+              >
+                <AlertCircle className="w-4 h-4" />
+                Stop
+              </button>
+            ) : (
+              <button 
+                onClick={startTraining}
+                disabled={!trainFile || !testFile}
+                className="flex-1 bg-[#1C1917] text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-[#44403C] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                Start
+              </button>
+            )}
+            {isTraining && (
+              <button 
+                onClick={togglePause}
+                className="px-4 bg-white border border-[#E7E5E4] rounded-xl flex items-center justify-center hover:bg-[#F5F5F4] transition-colors"
+              >
+                {isPaused ? <PlayCircle className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
+              </button>
+            )}
+          </div>
+          {!isTraining && (trainTensors || testTensors) && (
             <button 
-              onClick={stopTraining}
-              className="flex-1 bg-red-600 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
+              onClick={clearData}
+              className="w-full bg-white border border-[#E7E5E4] text-[#78716C] py-2 rounded-xl text-xs font-medium hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all flex items-center justify-center gap-2"
             >
-              <AlertCircle className="w-4 h-4" />
-              Stop
-            </button>
-          ) : (
-            <button 
-              onClick={startTraining}
-              disabled={!trainFile || !testFile}
-              className="flex-1 bg-[#1C1917] text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-[#44403C] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              Start
-            </button>
-          )}
-          {isTraining && (
-            <button 
-              onClick={togglePause}
-              className="px-4 bg-white border border-[#E7E5E4] rounded-xl flex items-center justify-center hover:bg-[#F5F5F4] transition-colors"
-            >
-              {isPaused ? <PlayCircle className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
+              <Scissors className="w-3 h-3" />
+              Clear Memory
             </button>
           )}
         </div>
@@ -781,14 +1013,93 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 p-8 overflow-y-auto space-y-8">
+        {/* Error Display */}
+        <AnimatePresence>
+          {isProcessing && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="bg-blue-50 border border-blue-200 text-blue-700 px-6 py-4 rounded-2xl flex flex-col gap-2 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                <div className="flex-1 text-sm font-medium">{statusMessage}</div>
+              </div>
+              <div className="w-full bg-blue-100 h-1.5 rounded-full overflow-hidden">
+                <motion.div 
+                  className="bg-blue-600 h-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${parseProgress}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+            </motion.div>
+          )}
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-2xl flex items-center gap-3 shadow-sm"
+            >
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <div className="flex-1 text-sm font-medium">{error}</div>
+              <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 transition-colors">
+                <Scissors className="w-4 h-4 rotate-90" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Large Dataset Warning */}
+        <AnimatePresence>
+          {showWarning && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+            >
+              <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-[#E7E5E4]">
+                <div className="bg-amber-100 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
+                  <AlertCircle className="text-amber-600 w-6 h-6" />
+                </div>
+                <h3 className="text-xl font-bold mb-2">Large Dataset Detected</h3>
+                <p className="text-[#78716C] text-sm leading-relaxed mb-8">
+                  You've uploaded a dataset with more than 100,000 samples. Training on this many samples in the browser may be slow or cause performance issues. Consider reducing the sample size for a smoother experience.
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowWarning(false)}
+                    className="flex-1 bg-[#1C1917] text-white py-3 rounded-xl font-semibold hover:bg-[#44403C] transition-colors"
+                  >
+                    Continue Anyway
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowWarning(false);
+                      setTrainSampleSize(50000);
+                    }}
+                    className="flex-1 bg-[#F5F5F4] text-[#1C1917] py-3 rounded-xl font-semibold hover:bg-[#E7E5E4] transition-colors"
+                  >
+                    Reduce Size
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Dataset Previews */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {trainData.length > 0 && (
             <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-lg">Training Preview</h2>
-                <div className="flex gap-4 text-xs font-medium text-[#78716C]">
-                  <span>Shape: {trainData.length} × {Object.keys(trainData[0] || {}).length}</span>
+                <div className="flex flex-col items-end gap-1 text-[10px] font-medium text-[#78716C]">
+                  <span>Showing 10 of {trainTensors?.y.length.toLocaleString()} rows</span>
+                  <span>Showing 20 of {features.length} columns</span>
                 </div>
               </div>
               <div className="overflow-x-auto border border-[#E7E5E4] rounded-lg">
@@ -818,8 +1129,9 @@ export default function App() {
             <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-lg">Testing Preview</h2>
-                <div className="flex gap-4 text-xs font-medium text-[#78716C]">
-                  <span>Shape: {testData.length} × {Object.keys(testData[0] || {}).length}</span>
+                <div className="flex flex-col items-end gap-1 text-[10px] font-medium text-[#78716C]">
+                  <span>Showing 10 of {testTensors?.y.length.toLocaleString()} rows</span>
+                  <span>Showing 20 of {features.length} columns</span>
                 </div>
               </div>
               <div className="overflow-x-auto border border-[#E7E5E4] rounded-lg">
@@ -848,66 +1160,81 @@ export default function App() {
 
         {/* Training Progress */}
         {isTraining && (
-          <section className="bg-[#1C1917] text-white rounded-2xl p-8 shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="text-sm font-medium text-[#A8A29E]">{statusMessage}</span>
+          <section className="bg-[#1C1917] text-white rounded-3xl p-8 shadow-2xl mb-8">
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-emerald-500 rounded-2xl flex items-center justify-center animate-pulse">
+                  <Play className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black tracking-tight">Parallel Training Active</h2>
+                  <p className="text-sm text-[#A8A29E]">Optimizing neural network across multiple cores</p>
+                </div>
               </div>
               {isPaused && (
                 <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider animate-pulse">
                   Paused
                 </span>
               )}
-            </div>
-            <div className="grid grid-cols-3 gap-8">
-              <div className="space-y-2">
-                <div className="text-[#A8A29E] text-xs font-semibold uppercase tracking-widest flex items-center gap-2">
-                  <Settings className="w-3 h-3" /> Current Optimizer
-                  <InfoTooltip title={currentOptimizer || ''} content={METRICS_INFO[currentOptimizer as keyof typeof METRICS_INFO] || ''} />
-                </div>
-                <div className="text-3xl font-bold tracking-tight">{currentOptimizer}</div>
-              </div>
-              <div className="space-y-2">
-                <div className="text-[#A8A29E] text-xs font-semibold uppercase tracking-widest flex items-center gap-2">
-                  <History className="w-3 h-3" /> Epoch
-                </div>
-                <div className="text-3xl font-bold tracking-tight">{currentEpoch} / {params.epochs}</div>
-              </div>
-              <div className="space-y-2">
-                <div className="text-[#A8A29E] text-xs font-semibold uppercase tracking-widest flex items-center gap-2">
-                  <Timer className="w-3 h-3" /> Elapsed Time
-                  <InfoTooltip title="Execution Time" content={METRICS_INFO['Execution Time']} />
-                </div>
-                <div className="text-3xl font-bold tracking-tight">{elapsedTime}s</div>
+              <div className="text-right">
+                <div className="text-[#A8A29E] text-[10px] font-bold uppercase tracking-widest mb-1">Total Elapsed Time</div>
+                <div className="text-2xl font-black">{elapsedTime}s</div>
               </div>
             </div>
-            <div className="mt-8 grid grid-cols-2 gap-8">
-              <div className="space-y-2">
-                <div className="flex justify-between text-[10px] font-bold text-[#A8A29E] uppercase tracking-widest">
-                  <span>Training Progress</span>
-                  <span>{Math.round(trainingProgress)}%</span>
+
+            <div className="grid grid-cols-4 gap-6">
+              {Object.entries(optimizerProgress).map(([opt, data]: [string, any]) => (
+                <div key={opt} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="font-bold text-sm tracking-tight">{opt}</div>
+                    <div className="text-[10px] font-bold text-[#A8A29E] uppercase">Epoch {data.epoch}/{params.epochs}</div>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[9px] font-bold text-[#A8A29E] uppercase">
+                        <span>Training</span>
+                        <span>{Math.round(data.trainProgress)}%</span>
+                      </div>
+                      <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                        <motion.div 
+                          className="h-full bg-emerald-500"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${data.trainProgress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[9px] font-bold text-[#A8A29E] uppercase">
+                        <span>Testing</span>
+                        <span>{Math.round(data.testProgress)}%</span>
+                      </div>
+                      <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                        <motion.div 
+                          className="h-full bg-blue-500"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${data.testProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                  <motion.div 
-                    className="h-full bg-emerald-500"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${trainingProgress}%` }}
-                  />
-                </div>
+              ))}
+            </div>
+
+            {/* Aggregated Progress */}
+            <div className="mt-8 pt-8 border-t border-white/10">
+              <div className="flex justify-between text-[10px] font-bold text-[#A8A29E] uppercase tracking-widest mb-2">
+                <span>Overall Completion</span>
+                <span>{Math.round(overallProgress)}%</span>
               </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-[10px] font-bold text-[#A8A29E] uppercase tracking-widest">
-                  <span>Testing Progress</span>
-                  <span>{Math.round(testingProgress)}%</span>
-                </div>
-                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                  <motion.div 
-                    className="h-full bg-blue-500"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${testingProgress}%` }}
-                  />
-                </div>
+              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-gradient-to-r from-emerald-500 to-blue-500"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${overallProgress}%` }}
+                />
               </div>
             </div>
           </section>
@@ -920,7 +1247,6 @@ export default function App() {
               <h3 className="font-bold mb-6 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4" /> 
                 Loss vs Epoch
-                <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} />
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -950,7 +1276,6 @@ export default function App() {
               <h3 className="font-bold mb-6 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" /> 
                 Accuracy vs Epoch
-                <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} />
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -985,7 +1310,6 @@ export default function App() {
               <h3 className="font-bold mb-6 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4" /> 
                 Gradient Norm vs Epoch
-                <InfoTooltip title="Gradient Norm" content={METRICS_INFO['Gradient Norm']} />
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1015,7 +1339,6 @@ export default function App() {
               <h3 className="font-bold mb-6 flex items-center gap-2">
                 <Timer className="w-4 h-4" /> 
                 Update Ratio vs Epoch
-                <InfoTooltip title="Update Ratio" content={METRICS_INFO['Update Ratio']} />
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1046,44 +1369,31 @@ export default function App() {
         {/* Comparison Table */}
         {results.length > 0 && (
           <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm overflow-hidden">
-            <h2 className="font-bold text-lg mb-6">Optimizer Comparison</h2>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="font-bold text-lg">Optimizer Comparison</h2>
+              <button 
+                onClick={() => setIsHelpOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-[#F5F5F4] text-[#1C1917] rounded-xl text-xs font-bold hover:bg-[#E7E5E4] transition-colors"
+              >
+                <HelpCircle className="w-4 h-4" />
+                Help Guide
+              </button>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="bg-[#F5F5F4] text-[#78716C] uppercase text-[10px] tracking-wider">
                   <tr>
                     <th className="px-6 py-4 font-semibold">Optimizer</th>
-                    <th className="px-6 py-4 font-semibold">
-                      Accuracy
-                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      F1 Score
-                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Precision
-                      <InfoTooltip title="Precision (Macro)" content={METRICS_INFO['Precision (Macro)']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Recall
-                      <InfoTooltip title="Recall (Macro)" content={METRICS_INFO['Recall (Macro)']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Log Loss
-                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Convergence
-                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Loss Variance
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
-                    </th>
-                    <th className="px-6 py-4 font-semibold">
-                      Time
-                      <InfoTooltip title="Execution Time" content={METRICS_INFO['Execution Time']} position="bottom" />
-                    </th>
+                    <th className="px-6 py-4 font-semibold">Accuracy</th>
+                    <th className="px-6 py-4 font-semibold">F1 Score</th>
+                    <th className="px-6 py-4 font-semibold">Precision</th>
+                    <th className="px-6 py-4 font-semibold">Recall</th>
+                    <th className="px-6 py-4 font-semibold">Log Loss</th>
+                    <th className="px-6 py-4 font-semibold">Convergence</th>
+                    <th className="px-6 py-4 font-semibold">AULC</th>
+                    <th className="px-6 py-4 font-semibold">Loss Variance</th>
+                    <th className="px-6 py-4 font-semibold">Train Time</th>
+                    <th className="px-6 py-4 font-semibold">Test Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E7E5E4]">
@@ -1091,7 +1401,6 @@ export default function App() {
                     <tr key={res.optimizer} className={cn(bestOptimizer?.optimizer === res.optimizer && "bg-emerald-50/50")}>
                       <td className="px-6 py-4 font-bold flex items-center gap-2">
                         {res.optimizer}
-                        <InfoTooltip title={res.optimizer} content={METRICS_INFO[res.optimizer as keyof typeof METRICS_INFO]} />
                         {bestOptimizer?.optimizer === res.optimizer && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
                       </td>
                       <td className="px-6 py-4">{safeFixed(res.testAccuracy, 1, 100, '%')}</td>
@@ -1099,9 +1408,11 @@ export default function App() {
                       <td className="px-6 py-4">{safeFixed(res.precision, 1, 100, '%')}</td>
                       <td className="px-6 py-4">{safeFixed(res.recall, 1, 100, '%')}</td>
                       <td className="px-6 py-4">{safeFixed(res.logLoss, 4)}</td>
-                      <td className="px-6 py-4">{safeFixed(res.convergenceRate, 2, 1, 'x')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.convergenceRate, 4)}</td>
+                      <td className="px-6 py-4">{safeFixed(res.aulc, 4)}</td>
                       <td className="px-6 py-4">{safeFixed(res.lossVariance, 6)}</td>
-                      <td className="px-6 py-4">{safeFixed(res.executionTime, 1, 1, 's')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.trainingTime, 1, 1, 's')}</td>
+                      <td className="px-6 py-4">{safeFixed(res.testingTime, 3, 1, 's')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1117,7 +1428,7 @@ export default function App() {
               <h3 className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">Best Optimizer</h3>
               <div className="text-3xl font-black mb-4">{bestOptimizer.optimizer}</div>
               <p className="text-sm leading-relaxed opacity-90">
-                The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 2, 1, 'x')}</span>.
+                The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 4)}</span>.
               </p>
             </section>
 
@@ -1170,14 +1481,12 @@ export default function App() {
                     <div>
                       <div className="text-[10px] text-[#78716C] uppercase font-semibold flex items-center justify-end gap-1">
                         Accuracy
-                        <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} />
                       </div>
                       <div className="text-sm font-bold">{safeFixed(exp.test_accuracy, 1, 100, '%')}</div>
                     </div>
                     <div>
                       <div className="text-[10px] text-[#78716C] uppercase font-semibold flex items-center justify-end gap-1">
                         Time
-                        <InfoTooltip title="Execution Time" content={METRICS_INFO['Execution Time']} />
                       </div>
                       <div className="text-sm font-bold">{safeFixed(exp.execution_time, 1, 1, 's')}</div>
                     </div>
@@ -1244,7 +1553,7 @@ export default function App() {
                   </h3>
                   <p className="text-sm text-emerald-800 leading-relaxed">
                     This experiment using <span className="font-bold">{selectedExperiment.optimizer}</span> on the <span className="font-bold">{selectedExperiment.dataset_name}</span> dataset achieved a test accuracy of <span className="font-bold">{safeFixed(selectedExperiment.test_accuracy, 2, 100, '%')}</span>. 
-                    The model converged with a rate of <span className="font-bold">{safeFixed(selectedExperiment.convergence_rate, 2, 1, 'x')}</span> over <span className="font-bold">{safeFixed(selectedExperiment.execution_time, 2, 1, 's')}</span>.
+                    The model converged with a rate of <span className="font-bold">{safeFixed(selectedExperiment.convergence_rate, 4)}</span> over <span className="font-bold">{safeFixed(selectedExperiment.execution_time, 2, 1, 's')}</span>.
                     {selectedExperiment.optimizer === 'Adam' ? " Adam's adaptive learning rate helped in stable convergence." : ""}
                     {selectedExperiment.test_accuracy > 0.8 ? " The high accuracy suggests well-tuned parameters for this specific data." : " There might be room for improvement by adjusting the learning rate or hidden layer size."}
                   </p>
@@ -1255,7 +1564,6 @@ export default function App() {
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-loss">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-1">
                       Loss & Accuracy
-                      <InfoTooltip title="Test Accuracy" content={METRICS_INFO['Test Accuracy']} position="bottom" />
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1274,7 +1582,6 @@ export default function App() {
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-grads">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-1">
                       Gradients & Updates
-                      <InfoTooltip title="Gradient Norm" content={METRICS_INFO['Gradient Norm']} position="bottom" />
                     </h4>
                     <div className="h-64">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1296,47 +1603,93 @@ export default function App() {
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       F1 Score
-                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-blue-600">{safeFixed(selectedExperiment.f1_score, 2, 100, '%')}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Log Loss
-                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-rose-600">{safeFixed(selectedExperiment.log_loss, 4)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       AULC
-                      <InfoTooltip title="AULC" content={METRICS_INFO['AULC']} position="bottom" />
                     </div>
                     <div className="text-xl font-black text-amber-600">{safeFixed(selectedExperiment.aulc, 2)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Loss Variance
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
                     </div>
                     <div className="text-xl font-black">{safeFixed(selectedExperiment.loss_variance, 6)}</div>
                   </div>
                   <div className="p-4 bg-white border border-[#E7E5E4] rounded-2xl">
                     <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1 flex items-center gap-1">
                       Conv. Rate
-                      <InfoTooltip title="Convergence Rate" content={METRICS_INFO['Convergence Rate']} position="bottom" />
                     </div>
-                    <div className="text-xl font-black text-emerald-600">{safeFixed(selectedExperiment.convergence_rate, 2, 1, 'x')}</div>
+                    <div className="text-xl font-black text-emerald-600">{safeFixed(selectedExperiment.convergence_rate, 4)}</div>
                   </div>
                 </div>
 
                 {/* Advanced Visualizations */}
+                <div className="grid grid-cols-1 gap-8">
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl overflow-x-auto">
+                    <h4 className="font-bold mb-6 text-sm flex items-center gap-2">
+                      <Grid3X3 className="w-4 h-4" /> 
+                      Confusion Matrix
+                    </h4>
+                    <div className="min-w-[600px]">
+                      <div className="grid grid-cols-[100px_1fr] gap-4">
+                        <div className="flex items-center justify-center [writing-mode:vertical-lr] rotate-180 text-[10px] font-bold text-[#78716C] uppercase tracking-widest">
+                          Actual Class
+                        </div>
+                        <div className="space-y-4">
+                          <div className="grid" style={{ gridTemplateColumns: `repeat(${classes.length}, 1fr)` }}>
+                            {classes.map((c, i) => (
+                              <div key={i} className="text-[8px] font-bold text-[#78716C] text-center truncate px-1" title={c}>
+                                {c}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${classes.length}, 1fr)` }}>
+                            {selectedExperiment.confusion_matrix.map((row: number[], i: number) => (
+                              row.map((val: number, j: number) => {
+                                const maxInRow = Math.max(...row);
+                                const intensity = maxInRow > 0 ? val / maxInRow : 0;
+                                return (
+                                  <div 
+                                    key={`${i}-${j}`}
+                                    className={cn(
+                                      "aspect-square flex items-center justify-center text-[8px] font-medium rounded-sm transition-all",
+                                      i === j ? "bg-emerald-600 text-white" : "bg-[#F5F5F4] text-[#1C1917]"
+                                    )}
+                                    style={{ 
+                                      backgroundColor: i === j ? undefined : `rgba(28, 25, 23, ${intensity * 0.2})`,
+                                      opacity: val === 0 ? 0.3 : 1
+                                    }}
+                                    title={`Actual: ${classes[i]}, Predicted: ${classes[j]}, Count: ${val}`}
+                                  >
+                                    {val > 0 ? val : ''}
+                                  </div>
+                                );
+                              })
+                            ))}
+                          </div>
+                          <div className="text-center text-[10px] font-bold text-[#78716C] uppercase tracking-widest mt-2">
+                            Predicted Class
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-8">
                   <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl" id="report-chart-speed">
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2">
                       <TrendingDown className="w-4 h-4" /> 
                       Convergence Speed
-                      <InfoTooltip title="Convergence Speed" content={METRICS_INFO['Convergence Speed']} position="bottom" />
                     </h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1354,7 +1707,6 @@ export default function App() {
                     <h4 className="font-bold mb-4 text-sm flex items-center gap-2">
                       <Activity className="w-4 h-4" /> 
                       Training Stability
-                      <InfoTooltip title="Loss Variance" content={METRICS_INFO['Loss Variance']} position="bottom" />
                     </h4>
                     <div className="h-48">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1423,28 +1775,24 @@ export default function App() {
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
                     <div className="text-xs text-[#78716C] uppercase font-bold mb-1 flex items-center justify-center gap-1">
                       Precision
-                      <InfoTooltip title="Precision (Macro)" content={METRICS_INFO['Precision (Macro)']} />
                     </div>
                     <div className="text-2xl font-black">{safeFixed(selectedExperiment.precision, 1, 100, '%')}</div>
                   </div>
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
                     <div className="text-xs text-[#78716C] uppercase font-bold mb-1 flex items-center justify-center gap-1">
                       Recall
-                      <InfoTooltip title="Recall (Macro)" content={METRICS_INFO['Recall (Macro)']} />
                     </div>
                     <div className="text-2xl font-black">{safeFixed(selectedExperiment.recall, 1, 100, '%')}</div>
                   </div>
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
                     <div className="text-xs text-[#78716C] uppercase font-bold mb-1 flex items-center justify-center gap-1">
                       F1 Score
-                      <InfoTooltip title="F1 Score" content={METRICS_INFO['F1 Score']} />
                     </div>
                     <div className="text-2xl font-black">{safeFixed(selectedExperiment.f1_score, 1, 100, '%')}</div>
                   </div>
                   <div className="p-6 border border-[#E7E5E4] rounded-2xl text-center">
                     <div className="text-xs text-[#78716C] uppercase font-bold mb-1 flex items-center justify-center gap-1">
                       Log Loss
-                      <InfoTooltip title="Log Loss" content={METRICS_INFO['Log Loss']} />
                     </div>
                     <div className="text-2xl font-black">{safeFixed(selectedExperiment.log_loss, 3)}</div>
                   </div>
@@ -1464,6 +1812,8 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }

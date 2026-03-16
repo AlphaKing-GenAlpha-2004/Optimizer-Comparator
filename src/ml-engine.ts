@@ -27,6 +27,8 @@ export interface ExperimentResult {
   f1Score: number;
   confusionMatrix: number[][];
   logLoss: number;
+  trainingTime: number;
+  testingTime: number;
   executionTime: number;
   convergenceRate: number;
   lossVariance: number;
@@ -220,43 +222,54 @@ export class NeuralNetwork {
   evaluate(x: any, y: any) {
     const { a2 } = this.forward(x);
     const numClasses = a2[0].length;
+    const numSamples = y.length;
     const confusionMatrix = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
     let correct = 0;
-    let logLoss = 0;
+    let totalLogLoss = 0;
 
     a2.forEach((pred: any, i: number) => {
       const predLabel = pred.indexOf(Math.max(...pred));
       const trueLabel = y[i];
       confusionMatrix[trueLabel][predLabel]++;
       if (predLabel === trueLabel) correct++;
-      logLoss -= Math.log(pred[trueLabel] + 1e-15);
+      totalLogLoss -= Math.log(pred[trueLabel] + 1e-15);
     });
 
-    const accuracy = correct / y.length;
-    logLoss /= y.length;
+    const accuracy = correct / numSamples;
+    const logLoss = totalLogLoss / numSamples;
 
-    // Calculate Macro Precision, Recall, F1 (Average of per-class metrics)
-    let totalPrecision = 0;
-    let totalRecall = 0;
-    let totalF1 = 0;
+    // Calculate Support-Weighted Precision, Recall, F1
+    let weightedPrecision = 0;
+    let weightedRecall = 0;
+    let weightedF1 = 0;
+    let totalSupport = 0;
 
     for (let i = 0; i < numClasses; i++) {
       const tp = confusionMatrix[i][i];
-      const fp = confusionMatrix.reduce((sum, row, idx) => (idx !== i ? sum + row[i] : sum), 0);
-      const fn = confusionMatrix[i].reduce((sum, val, idx) => (idx !== i ? sum + val : sum), 0);
+      
+      // Row sum: actual samples of class i (support)
+      let actual_i = 0;
+      for (let j = 0; j < numClasses; j++) actual_i += confusionMatrix[i][j];
+      
+      // Column sum: total predictions for class i
+      let predicted_i = 0;
+      for (let j = 0; j < numClasses; j++) predicted_i += confusionMatrix[j][i];
 
-      const p = tp + fp > 0 ? tp / (tp + fp) : 0;
-      const r = tp + fn > 0 ? tp / (tp + fn) : 0;
-      const f = p + r > 0 ? (2 * p * r) / (p + r) : 0;
+      if (actual_i > 0) {
+        const p = predicted_i > 0 ? tp / predicted_i : 0;
+        const r = tp / actual_i;
+        const f = (p + r) > 0 ? (2 * p * r) / (p + r) : 0;
 
-      totalPrecision += p;
-      totalRecall += r;
-      totalF1 += f;
+        weightedPrecision += p * actual_i;
+        weightedRecall += r * actual_i;
+        weightedF1 += f * actual_i;
+        totalSupport += actual_i;
+      }
     }
 
-    const precision = totalPrecision / numClasses;
-    const recall = totalRecall / numClasses;
-    const f1Score = (precision + recall > 0) ? (2 * precision * recall) / (precision + recall) : 0;
+    const precision = totalSupport > 0 ? weightedPrecision / totalSupport : 0;
+    const recall = totalSupport > 0 ? weightedRecall / totalSupport : 0;
+    const f1Score = totalSupport > 0 ? weightedF1 / totalSupport : 0;
 
     return {
       accuracy,
