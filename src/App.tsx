@@ -315,8 +315,8 @@ export default function App() {
             setIsProcessing(false);
             return;
           }
-          featCols = cols.slice(0, -1);
-          targetCol = cols[cols.length - 1];
+          targetCol = cols[0];        // first column is label
+          featCols = cols.slice(1);   // remaining columns are features
           
           if (type === 'train') {
             setFeatures(featCols);
@@ -339,8 +339,9 @@ export default function App() {
 
           // Process for TypedArrays
           featCols.forEach((f, j) => {
-            let val = Number(row[f]) || 0;
-            if (val > 1) val /= 255; 
+            let val = parseFloat(row[f]);
+            if (!Number.isFinite(val)) val = 0;
+            val /= 255;
             if (X) X[rowCount * featCols.length + j] = val;
           });
 
@@ -475,9 +476,12 @@ export default function App() {
     let epochs = params.epochs;
 
     // Auto Performance Mode (Step 9)
-    if (trainTensors.y.length > 50000) {
-      batchSize = Math.max(batchSize, 256);
-      epochs = Math.min(epochs, 8);
+    if (trainTensors.y.length > 10000) {
+      batchSize = 128;
+      if (trainTensors.y.length > 50000) {
+        batchSize = 256;
+        epochs = Math.min(epochs, 8);
+      }
       setStatusMessage(`Auto Performance Mode: Batch size ${batchSize}, Epochs ${epochs}`);
     } else {
       setStatusMessage(`Starting parallel training on ${cores} cores...`);
@@ -549,10 +553,17 @@ export default function App() {
         const X_test_buf = isLast ? testTensors.X : new Float32Array(testTensors.X);
         const y_test_buf = isLast ? testTensors.y : new Int32Array(testTensors.y);
 
+        // Optimizer-Specific Learning Rates
+        let lr = params.learningRate;
+        if (opt === 'SGD') lr = 0.01;
+        else if (opt === 'Adagrad') lr = 0.01;
+        else if (opt === 'RMSProp') lr = 0.001;
+        else if (opt === 'Adam') lr = 0.001;
+
         worker.postMessage({
           optimizer: opt,
           hiddenSize: params.hiddenSize,
-          learningRate: params.learningRate,
+          learningRate: lr,
           epochs: epochs,
           batchSize: batchSize,
           inputSize: features.length,

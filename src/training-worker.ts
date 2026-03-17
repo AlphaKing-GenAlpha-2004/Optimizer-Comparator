@@ -126,9 +126,9 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
 
       // Compute Loss (Cross Entropy)
       let batchLoss = 0;
-      const ySmoothed = Array.from({ length: currentBatchSize }, () => new Array(outputSize).fill(0.1 / outputSize));
+      const ySmoothed = Array.from({ length: currentBatchSize }, () => new Array(outputSize).fill(0.01 / outputSize));
       yBatch.forEach((label, idx) => {
-        ySmoothed[idx][label] = 0.9 + (0.1 / outputSize);
+        ySmoothed[idx][label] = 0.99 + (0.01 / outputSize);
         batchLoss -= Math.log(a2[idx][label] + 1e-15);
       });
       totalLoss += batchLoss / currentBatchSize;
@@ -234,14 +234,14 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
 
     // Epoch Evaluation
     const avgLoss = totalLoss / batchCount;
-    // Fast eval for training accuracy
-    const evalSize = Math.min(1000, trainSamples);
+    // Fast eval for training accuracy (using TEST data as requested)
+    const evalSize = Math.min(1000, testSamples);
     const xEval = new Array(evalSize);
     const yEval = new Array(evalSize);
     for (let j = 0; j < evalSize; j++) {
-      const idx = Math.floor(Math.random() * trainSamples);
-      xEval[j] = Array.from(X_train.subarray(idx * inputSize, (idx + 1) * inputSize));
-      yEval[j] = y_train[idx];
+      const idx = Math.floor(Math.random() * testSamples);
+      xEval[j] = Array.from(X_test.subarray(idx * inputSize, (idx + 1) * inputSize));
+      yEval[j] = y_test[idx];
     }
     const { a2: a2Eval } = { a2: softmax(math.add(math.multiply(relu(math.add(math.multiply(xEval, w1 as any), b1 as any)), w2 as any), b2 as any)) };
     let correct = 0;
@@ -382,9 +382,11 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
   const logLoss = totalLogLoss / testSamples;
 
   // Step 8: Compute Convergence Speed (Corrected formula)
-  const initialLoss = metrics[0]?.loss || 0;
-  const finalLoss = metrics[metrics.length - 1]?.loss || 0;
-  const convergenceRate = (initialLoss - finalLoss) / epochs;
+  const convergenceRate =
+    metrics.length > 1
+      ? (metrics[0].loss - metrics[metrics.length - 1].loss) /
+        (metrics.length * Math.max(...metrics.map(m => m.loss)))
+      : 0;
 
   // Step 9: Compute Loss Variance
   const avgLoss = metrics.reduce((sum, m) => sum + m.loss, 0) / metrics.length;
@@ -411,7 +413,10 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       testingTime,
       executionTime: trainingTime + testingTime,
       convergenceRate,
-      aulc: metrics.length > 1 ? metrics.slice(1).reduce((acc, m, i) => acc + (metrics[i].loss + m.loss) / 2, 0) : 0,
+      aulc: metrics.reduce((acc, m, i) => {
+        if (i === 0) return acc;
+        return acc + (metrics[i-1].accuracy + m.accuracy) / 2;
+      }, 0),
       lossVariance
     }
   });
