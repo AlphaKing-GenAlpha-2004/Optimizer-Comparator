@@ -5,6 +5,7 @@ export type OptimizerType = 'SGD' | 'Adagrad' | 'RMSProp' | 'Adam';
 export interface ModelParams {
   hiddenSize: number;
   learningRate: number;
+  adamLearningRate: number;
   epochs: number;
   batchSize: number;
 }
@@ -20,6 +21,7 @@ export interface TrainingMetric {
 
 export interface ExperimentResult {
   optimizer: OptimizerType;
+  learningRate: number;
   metrics: TrainingMetric[];
   testAccuracy: number;
   precision: number;
@@ -52,9 +54,11 @@ export class NeuralNetwork {
     const scale1 = Math.sqrt(2.0 / inputSize);
     const scale2 = Math.sqrt(2.0 / hiddenSize);
     
-    this.w1 = math.multiply(math.random([inputSize, hiddenSize], -1, 1), scale1);
+    // Using user-requested formula: (Math.random() - 0.5) * Math.sqrt(2 / inputSize)
+    // In mathjs, this is math.random(..., -0.5, 0.5) * scale
+    this.w1 = math.multiply(math.random([inputSize, hiddenSize], -0.5, 0.5), scale1);
     this.b1 = math.zeros([1, hiddenSize]);
-    this.w2 = math.multiply(math.random([hiddenSize, outputSize], -1, 1), scale2);
+    this.w2 = math.multiply(math.random([hiddenSize, outputSize], -0.5, 0.5), scale2);
     this.b2 = math.zeros([1, outputSize]);
 
     // Init optimizer states

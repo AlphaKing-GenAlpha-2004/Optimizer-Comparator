@@ -156,7 +156,8 @@ export default function App() {
   
   const [params, setParams] = useState<ModelParams>({
     hiddenSize: 64,
-    learningRate: 0.001,
+    learningRate: 0.01,
+    adamLearningRate: 0.001,
     epochs: 10,
     batchSize: 64
   });
@@ -186,10 +187,17 @@ export default function App() {
   const fetchHistory = async () => {
     try {
       const res = await fetch('/api/experiments');
+      if (!res.ok) {
+        throw new Error(`Server responded with ${res.status}`);
+      }
       const data = await res.json();
       setHistory(data);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to fetch history', e);
+      // If we get an HTML response, it might be the SPA fallback
+      if (e.message?.includes('Unexpected token')) {
+        console.warn('Received non-JSON response from API. Check server routes.');
+      }
     }
   };
 
@@ -318,9 +326,23 @@ export default function App() {
           targetCol = cols[0];        // first column is label
           featCols = cols.slice(1);   // remaining columns are features
           
+          const inputSize = featCols.length;
+          let newHiddenSize;
+          if (inputSize <= 1000) {
+            newHiddenSize = 64;        // MNIST-like datasets
+          } else if (inputSize <= 3000) {
+            newHiddenSize = 256;       // CIFAR-like datasets
+          } else {
+            newHiddenSize = 512;       // large datasets
+          }
+          
           if (type === 'train') {
             setFeatures(featCols);
             setTarget(targetCol);
+            setParams(prev => ({ ...prev, hiddenSize: newHiddenSize }));
+            if (inputSize > 2000) {
+              console.log("Detected high-dimensional image dataset (likely RGB)");
+            }
           }
 
           X = new Float32Array(maxSamples * featCols.length);
@@ -445,8 +467,8 @@ export default function App() {
       return;
     }
 
-    if (params.learningRate <= 0 || params.learningRate > 1) {
-      setError("Learning rate must be between 0 and 1.");
+    if (params.learningRate <= 0 || params.learningRate > 1 || params.adamLearningRate <= 0 || params.adamLearningRate > 1) {
+      setError("Learning rates must be between 0 and 1.");
       return;
     }
 
@@ -505,8 +527,8 @@ export default function App() {
           if (watchdog) clearTimeout(watchdog);
           watchdog = setTimeout(() => {
             worker.terminate();
-            reject(new Error(`Optimizer ${opt} timed out (no progress for 300s).`));
-          }, 300000); // 300 seconds of inactivity
+            reject(new Error(`Optimizer ${opt} timed out (no progress for 600s).`));
+          }, 600000); // Increased to 600 seconds of inactivity
         };
 
         resetWatchdog();
@@ -541,24 +563,19 @@ export default function App() {
           console.error("Worker Error:", err);
           clearTimeout(watchdog);
           worker.terminate();
-          reject(new Error(`Worker crash: ${err.message}`));
+          const errorMessage = err.message || "Unknown worker error (possible memory limit or crash)";
+          reject(new Error(`Worker crash: ${errorMessage}`));
         };
 
-        // Transfer buffers to worker (Step 7)
-        // We clone for the first 3 and transfer for the last one to reuse memory efficiently
-        const isLast = opt === 'Adam'; // Adam is usually last in the list
-        
-        const X_train_buf = isLast ? trainTensors.X : new Float32Array(trainTensors.X);
-        const y_train_buf = isLast ? trainTensors.y : new Int32Array(trainTensors.y);
-        const X_test_buf = isLast ? testTensors.X : new Float32Array(testTensors.X);
-        const y_test_buf = isLast ? testTensors.y : new Int32Array(testTensors.y);
+        // Clone buffers for each worker to avoid detaching the original ones (Step 7)
+        // This is critical for parallel execution as transferring a buffer detaches it.
+        const X_train_buf = new Float32Array(trainTensors.X);
+        const y_train_buf = new Int32Array(trainTensors.y);
+        const X_test_buf = new Float32Array(testTensors.X);
+        const y_test_buf = new Int32Array(testTensors.y);
 
         // Optimizer-Specific Learning Rates
-        let lr = params.learningRate;
-        if (opt === 'SGD') lr = 0.01;
-        else if (opt === 'Adagrad') lr = 0.01;
-        else if (opt === 'RMSProp') lr = 0.001;
-        else if (opt === 'Adam') lr = 0.001;
+        let lr = (opt === 'Adam' || opt === 'RMSProp') ? params.adamLearningRate : params.learningRate;
 
         worker.postMessage({
           optimizer: opt,
@@ -596,7 +613,7 @@ export default function App() {
             train_test_split: (trainTensors.y.length / (trainTensors.y.length + testTensors.y.length)) * 100,
             optimizer: res.optimizer,
             hidden_size: params.hiddenSize,
-            learning_rate: params.learningRate,
+            learning_rate: res.learningRate,
             epochs: params.epochs,
             batch_size: batchSize,
             test_accuracy: res.testAccuracy,
@@ -946,12 +963,23 @@ export default function App() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] font-medium">Learning Rate</label>
+              <label className="text-[11px] font-medium">Base LR (SGD/Adagrad)</label>
               <input 
                 type="number" step="0.001" value={params.learningRate || ''} 
                 onChange={e => {
                   const val = parseFloat(e.target.value);
                   setParams({...params, learningRate: isNaN(val) ? 0 : val});
+                }}
+                className="w-full bg-[#F5F5F4] border-none rounded-md px-3 py-2 text-sm focus:ring-1 ring-[#1C1917]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium">Adam/RMSProp LR</label>
+              <input 
+                type="number" step="0.001" value={params.adamLearningRate || ''} 
+                onChange={e => {
+                  const val = parseFloat(e.target.value);
+                  setParams({...params, adamLearningRate: isNaN(val) ? 0 : val});
                 }}
                 className="w-full bg-[#F5F5F4] border-none rounded-md px-3 py-2 text-sm focus:ring-1 ring-[#1C1917]"
               />

@@ -33,14 +33,13 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
   const maxTrainingTime = 60000 * 1000; // 60,000 seconds safety limit
 
   // Initialize weights (Step 2)
-  // He Initialization for ReLU (W1)
+  // Using user-requested formula: (Math.random() - 0.5) * Math.sqrt(2 / inputSize)
   const scale1 = Math.sqrt(2.0 / inputSize);
-  // Xavier Initialization for Softmax (W2)
-  const scale2 = Math.sqrt(1.0 / hiddenSize);
+  const scale2 = Math.sqrt(2.0 / hiddenSize);
   
-  let w1 = math.multiply(math.random([inputSize, hiddenSize], -1, 1), scale1);
+  let w1 = math.multiply(math.random([inputSize, hiddenSize], -0.5, 0.5), scale1);
   let b1 = math.zeros([1, hiddenSize]);
-  let w2 = math.multiply(math.random([hiddenSize, outputSize], -1, 1), scale2);
+  let w2 = math.multiply(math.random([hiddenSize, outputSize], -0.5, 0.5), scale2);
   let b2 = math.zeros([1, outputSize]);
 
   // Optimizer states
@@ -230,25 +229,45 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       b2 = math.subtract(b2 as any, u_b2 as any);
 
       batchCount++;
+
+      // Intra-epoch progress reporting (every 100 batches) to keep watchdog alive
+      if (batchCount % 100 === 0) {
+        self.postMessage({ 
+          type: 'progress', 
+          optimizer, 
+          epoch, 
+          trainProgress: ((epoch - 1) / epochs + (batchCount / (trainSamples / batchSize)) / epochs) * 100,
+          testProgress: 0
+        });
+      }
     }
 
     // Epoch Evaluation
     const avgLoss = totalLoss / batchCount;
     // Fast eval for training accuracy (using TEST data as requested)
     const evalSize = Math.min(1000, testSamples);
-    const xEval = new Array(evalSize);
-    const yEval = new Array(evalSize);
-    for (let j = 0; j < evalSize; j++) {
-      const idx = Math.floor(Math.random() * testSamples);
-      xEval[j] = Array.from(X_test.subarray(idx * inputSize, (idx + 1) * inputSize));
-      yEval[j] = y_test[idx];
-    }
-    const { a2: a2Eval } = { a2: softmax(math.add(math.multiply(relu(math.add(math.multiply(xEval, w1 as any), b1 as any)), w2 as any), b2 as any)) };
+    
+    // Use a more memory-efficient way to evaluate
     let correct = 0;
-    a2Eval.forEach((pred: any, idx: number) => {
-      const predLabel = pred.indexOf(Math.max(...pred));
-      if (predLabel === yEval[idx]) correct++;
-    });
+    const evalBatchSize = 100;
+    for (let j = 0; j < evalSize; j += evalBatchSize) {
+      const currentEvalBatchSize = Math.min(evalBatchSize, evalSize - j);
+      const xEval = new Array(currentEvalBatchSize);
+      const yEval = new Array(currentEvalBatchSize);
+      
+      for (let k = 0; k < currentEvalBatchSize; k++) {
+        const idx = Math.floor(Math.random() * testSamples);
+        xEval[k] = Array.from(X_test.subarray(idx * inputSize, (idx + 1) * inputSize));
+        yEval[k] = y_test[idx];
+      }
+      
+      const { a2: a2Eval } = { a2: softmax(math.add(math.multiply(relu(math.add(math.multiply(xEval, w1 as any), b1 as any)), w2 as any), b2 as any)) };
+      
+      a2Eval.forEach((pred: any, idx: number) => {
+        const predLabel = pred.indexOf(Math.max(...pred));
+        if (predLabel === yEval[idx]) correct++;
+      });
+    }
     const accuracy = correct / evalSize;
 
     const metric = {
@@ -402,6 +421,7 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
     optimizer,
     metrics: {
       optimizer,
+      learningRate,
       metrics,
       testAccuracy,
       precision,

@@ -6,7 +6,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database('experiments.db');
+const db = new Database(path.join(__dirname, 'experiments.db'));
 
 // Initialize Database
 db.exec(`
@@ -59,6 +59,11 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Health Check
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
 
   // API Routes
   app.get('/api/experiments', (req, res) => {
