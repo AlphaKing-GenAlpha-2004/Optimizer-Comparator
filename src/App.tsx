@@ -10,9 +10,10 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, HelpCircle, Grid3X3
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
+import InfoModal from './components/InfoModal';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -20,127 +21,6 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const METRICS_INFO = {
-  // Optimizers
-  'SGD': 'Stochastic Gradient Descent: Updates parameters using the gradient of the loss function with respect to a single or small batch of samples.',
-  'Adagrad': 'Adaptive Gradient Algorithm: Scales the learning rate for each parameter based on the historical sum of squared gradients.',
-  'RMSProp': 'Root Mean Square Propagation: An adaptive learning rate method that uses a moving average of squared gradients to normalize the gradient.',
-  'Adam': 'Adaptive Moment Estimation: Combines the advantages of Adagrad and RMSProp, using both first and second moments of the gradients.',
-  
-  // Core Metrics
-  'Test Accuracy': 'The percentage of predictions that are correct on the test dataset.',
-  'Precision (Macro)': 'Measures how many predicted positive samples are actually correct. Calculated per class and averaged across classes.',
-  'Recall (Macro)': 'Measures how well the model identifies all true positive samples across classes.',
-  'F1 Score': 'The harmonic mean of Precision and Recall. Provides a balanced measure when dealing with class imbalance.',
-  'Log Loss': 'Measures the uncertainty of predictions. Lower values indicate more confident and accurate predictions.',
-  
-  // Training Dynamics
-  'Gradient Norm': 'Represents the magnitude of gradients during backpropagation. Large values may indicate instability, while very small values may indicate the model has stopped learning.',
-  'Update Ratio': 'The ratio of parameter update magnitude to the parameter value. Ideal values are typically around 10⁻³ (0.001). Too high indicates unstable learning; too low indicates slow learning.',
-  'Convergence Speed': 'Measures how quickly the loss decreases during training.',
-  'Loss Variance': 'Indicates how much the loss fluctuates during training. High variance may suggest unstable optimization or an overly high learning rate.',
-  
-  // Advanced Benchmarks
-  'AULC': 'Area Under Learning Curve: Represents the cumulative performance across all training epochs. Higher values indicate faster and more stable learning.',
-  'Execution Time': 'The total time required to complete model training.',
-  'Convergence Rate': 'Measures the efficiency of an optimizer relative to a baseline optimizer (SGD) in reaching a stable loss.'
-};
-
-const HelpModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => (
-  <AnimatePresence>
-    {isOpen && (
-      <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl border border-[#E7E5E4] max-h-[80vh] flex flex-col"
-        >
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              <HelpCircle className="w-6 h-6 text-emerald-600" />
-              Metrics & Optimizers Guide
-            </h3>
-            <button 
-              onClick={onClose}
-              className="p-2 hover:bg-[#F5F5F4] rounded-full transition-colors"
-            >
-              <Scissors className="w-5 h-5 rotate-90 text-[#78716C]" />
-            </button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto pr-4 space-y-8 custom-scrollbar">
-            <section>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Core Performance Metrics</h4>
-              <div className="grid gap-6">
-                <div>
-                  <div className="font-bold text-sm mb-1">Accuracy</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Percentage of correct predictions. Calculated as correct predictions divided by total samples.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Precision</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Ratio of correctly predicted positive observations to total predicted positives. Measures the "quality" of positive predictions.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Recall</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Ratio of correctly predicted positives to all actual positives. Measures the model's ability to find all positive samples.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">F1 Score</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Harmonic mean of precision and recall. Provides a balanced measure, especially useful for imbalanced datasets.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Log Loss</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Measures prediction uncertainty using cross-entropy loss. Lower values indicate more confident and accurate predictions.</div>
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Training Dynamics</h4>
-              <div className="grid gap-6">
-                <div>
-                  <div className="font-bold text-sm mb-1">Convergence</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Relative speed at which the optimizer reaches a stable loss. Higher values indicate more efficient optimization.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Loss Variance</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Variation in training loss across epochs. High variance may suggest unstable optimization or an overly high learning rate.</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Execution Time</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">Total time required to complete model training in the browser environment.</div>
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4">Optimizers</h4>
-              <div className="grid gap-6">
-                <div>
-                  <div className="font-bold text-sm mb-1">SGD</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['SGD']}</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Adam</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['Adam']}</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">Adagrad</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['Adagrad']}</div>
-                </div>
-                <div>
-                  <div className="font-bold text-sm mb-1">RMSProp</div>
-                  <div className="text-sm text-[#78716C] leading-relaxed">{METRICS_INFO['RMSProp']}</div>
-                </div>
-              </div>
-            </section>
-          </div>
-        </motion.div>
-      </div>
-    )}
-  </AnimatePresence>
-);
 
 export default function App() {
   // State
@@ -875,7 +755,25 @@ export default function App() {
           <div className="bg-[#1C1917] p-2 rounded-lg">
             <Database className="text-white w-5 h-5" />
           </div>
-          <h1 className="font-bold text-lg tracking-tight">Neur-O-Opt Lab</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-bold text-lg tracking-tight">Neur-O-Opt Lab</h1>
+            <button 
+              onClick={() => setIsHelpOpen(true)}
+              className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
+              title="Learn about Optimizers"
+            >
+              <Info className="w-4 h-4 text-[#78716C] group-hover:text-emerald-600" />
+            </button>
+            <a 
+              href="https://github.com/AlphaKing-GenAlpha-2004/Optimizer-Comparator.git"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
+              title="View on GitHub"
+            >
+              <Github className="w-4 h-4 text-[#78716C] group-hover:text-[#1C1917]" />
+            </a>
+          </div>
         </div>
 
         {/* Dataset Upload */}
@@ -1410,13 +1308,6 @@ export default function App() {
           <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm overflow-hidden">
             <div className="flex justify-between items-center mb-6">
               <h2 className="font-bold text-lg">Optimizer Comparison</h2>
-              <button 
-                onClick={() => setIsHelpOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-[#F5F5F4] text-[#1C1917] rounded-xl text-xs font-bold hover:bg-[#E7E5E4] transition-colors"
-              >
-                <HelpCircle className="w-4 h-4" />
-                Help Guide
-              </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
@@ -1852,7 +1743,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+      <InfoModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }
