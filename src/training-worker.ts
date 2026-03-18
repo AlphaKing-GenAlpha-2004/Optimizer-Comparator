@@ -96,6 +96,8 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
     let batchCount = 0;
     let totalGradNorm = 0;
     let totalUpdateNorm = 0;
+    const batchLosses: number[] = [];
+    const batchGradNorms: number[] = [];
 
     for (let i = 0; i < trainSamples; i += batchSize) {
       // Heartbeat to prevent watchdog timeout (every 100 batches)
@@ -112,7 +114,6 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       
       for (let b = 0; b < currentBatchSize; b++) {
         const idx = batchIndices[b];
-        // Use subarray directly if possible, or a faster way to get data
         xBatch[b] = Array.from(X_train.subarray(idx * inputSize, (idx + 1) * inputSize));
         yBatch[b] = y_train[idx];
       }
@@ -123,14 +124,19 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       const z2 = math.add(math.multiply(a1 as any, w2 as any), b2 as any);
       const a2 = softmax(z2);
 
-      // Compute Loss (Cross Entropy)
+      // Compute Loss (Cross Entropy) with label smoothing
       let batchLoss = 0;
-      const ySmoothed = Array.from({ length: currentBatchSize }, () => new Array(outputSize).fill(0.01 / outputSize));
+      const smoothVal = 0.01 / outputSize;
+      const targetVal = 0.99 + smoothVal;
+      
+      const ySmoothed = Array.from({ length: currentBatchSize }, () => new Array(outputSize).fill(smoothVal));
       yBatch.forEach((label, idx) => {
-        ySmoothed[idx][label] = 0.99 + (0.01 / outputSize);
+        ySmoothed[idx][label] = targetVal;
         batchLoss -= Math.log(a2[idx][label] + 1e-15);
       });
-      totalLoss += batchLoss / currentBatchSize;
+      const currentLoss = batchLoss / currentBatchSize;
+      totalLoss += currentLoss;
+      batchLosses.push(currentLoss);
 
       if (isNaN(totalLoss) || !isFinite(totalLoss)) {
         self.postMessage({ type: 'error', optimizer, message: `Training diverged (Loss is NaN/Infinity) at epoch ${epoch}. Try reducing learning rate.` });
@@ -203,7 +209,7 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
         u_b2 = math.dotDivide(math.multiply(learningRate, mHatB2 as any) as any, math.add(math.map(vHatB2 as any, Math.sqrt as any) as any, eps) as any);
       }
 
-      // Track Gradient Norm (Corrected: sum of all squared gradients)
+      // Track Gradient Norm
       const gradNorm = Math.sqrt(
         (math.sum(math.dotMultiply(dw1, dw1) as any) as any) +
         (math.sum(math.dotMultiply(dw2, dw2) as any) as any) +
@@ -211,8 +217,9 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
         (math.sum(math.dotMultiply(db2, db2) as any) as any)
       );
       totalGradNorm += gradNorm;
+      batchGradNorms.push(gradNorm);
 
-      // Track Update Ratio (||deltaW|| / ||W||) (Corrected: sum of all squared updates and weights)
+      // Track Update Ratio (||deltaW|| / ||W||)
       const updateNorm = Math.sqrt(
         (math.sum(math.dotMultiply(u_w1 as any, u_w1 as any) as any) as any) +
         (math.sum(math.dotMultiply(u_w2 as any, u_w2 as any) as any) as any)
@@ -230,7 +237,7 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
 
       batchCount++;
 
-      // Intra-epoch progress reporting (every 100 batches) to keep watchdog alive
+      // Intra-epoch progress reporting
       if (batchCount % 100 === 0) {
         self.postMessage({ 
           type: 'progress', 
@@ -244,10 +251,24 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
 
     // Epoch Evaluation
     const avgLoss = totalLoss / batchCount;
-    // Fast eval for training accuracy (using TEST data as requested)
+    let epochDuration = Date.now() - epochStartTime;
+    const throughput = trainSamples / (epochDuration / 1000);
+
+    // Calculate Variances
+    const lossVariance = batchLosses.reduce((sum, l) => sum + Math.pow(l - avgLoss, 2), 0) / batchCount;
+    const avgGradNorm = totalGradNorm / batchCount;
+    const gradientVariance = batchGradNorms.reduce((sum, g) => sum + Math.pow(g - avgGradNorm, 2), 0) / batchCount;
+
+    // Parameter Norm
+    const parameterNorm = Math.sqrt(
+      (math.sum(math.dotMultiply(w1 as any, w1 as any) as any) as any) +
+      (math.sum(math.dotMultiply(w2 as any, w2 as any) as any) as any) +
+      (math.sum(math.dotMultiply(b1 as any, b1 as any) as any) as any) +
+      (math.sum(math.dotMultiply(b2 as any, b2 as any) as any) as any)
+    );
+
+    // Fast eval for training accuracy
     const evalSize = Math.min(1000, testSamples);
-    
-    // Use a more memory-efficient way to evaluate
     let correct = 0;
     const evalBatchSize = 100;
     for (let j = 0; j < evalSize; j += evalBatchSize) {
@@ -274,14 +295,18 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       epoch,
       loss: avgLoss,
       accuracy,
-      gradientNorm: totalGradNorm / batchCount,
+      gradientNorm: avgGradNorm,
       updateRatio: totalUpdateNorm / batchCount,
-      convergenceSpeed: metrics.length > 0 ? metrics[metrics.length - 1].loss - avgLoss : 0
+      convergenceSpeed: metrics.length > 0 ? metrics[metrics.length - 1].loss - avgLoss : 0,
+      gradientVariance,
+      parameterNorm,
+      throughput,
+      lossVariance
     };
     metrics.push(metric);
 
     // Benchmark (Step 8)
-    const epochDuration = Date.now() - epochStartTime;
+    epochDuration = Date.now() - epochStartTime;
     if (epochDuration > 2000) { // 2 seconds threshold for warning
       console.warn(`[${optimizer}] Epoch ${epoch} took ${epochDuration}ms. Consider increasing batch size or reducing hidden layer size.`);
     }

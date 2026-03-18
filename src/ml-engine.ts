@@ -17,6 +17,10 @@ export interface TrainingMetric {
   gradientNorm: number;
   updateRatio: number;
   convergenceSpeed: number;
+  gradientVariance: number;
+  parameterNorm: number;
+  throughput: number;
+  lossVariance: number;
 }
 
 export interface ExperimentResult {
@@ -35,6 +39,16 @@ export interface ExperimentResult {
   convergenceRate: number;
   lossVariance: number;
   aulc: number;
+  anovaData?: {
+    fValue: number;
+    pValue: number;
+    ssBetween: number;
+    ssWithin: number;
+    dfBetween: number;
+    dfWithin: number;
+    msBetween: number;
+    msWithin: number;
+  };
 }
 
 export class NeuralNetwork {
