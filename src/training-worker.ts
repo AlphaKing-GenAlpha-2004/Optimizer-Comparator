@@ -100,8 +100,8 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
     const batchGradNorms: number[] = [];
 
     for (let i = 0; i < trainSamples; i += batchSize) {
-      // Heartbeat to prevent watchdog timeout (every 100 batches)
-      if (i % (batchSize * 100) === 0) {
+      // Heartbeat to prevent watchdog timeout (every 20 batches)
+      if (i % (batchSize * 20) === 0) {
         self.postMessage({ type: 'progress', optimizer, epoch, trainProgress: (epoch / epochs) * 100, testProgress: 0 });
       }
 
@@ -237,8 +237,8 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
 
       batchCount++;
 
-      // Intra-epoch progress reporting
-      if (batchCount % 100 === 0) {
+      // Intra-epoch progress reporting (every 20 batches)
+      if (batchCount % 20 === 0) {
         self.postMessage({ 
           type: 'progress', 
           optimizer, 
@@ -382,6 +382,11 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       trainProgress: 100,
       testProgress: Math.min(100, ((i + currentBatchSize) / testSamples) * 100)
     });
+
+    // Heartbeat during testing
+    if (i % (testBatchSize * 5) === 0) {
+      self.postMessage({ type: 'progress', optimizer, epoch: epochs, trainProgress: 100, testProgress: (i / testSamples) * 100 });
+    }
   }
 
   // Step 3: Build Confusion Matrix with defensive sizing

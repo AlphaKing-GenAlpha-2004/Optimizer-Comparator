@@ -67,15 +67,18 @@ async function startServer() {
 
   // API Routes
   app.get('/api/experiments', (req, res) => {
+    console.log('GET /api/experiments');
     try {
       const rows = db.prepare('SELECT id, dataset_name, optimizer, test_accuracy, execution_time, timestamp FROM experiments ORDER BY timestamp DESC LIMIT 50').all();
       res.json(rows);
     } catch (error) {
+      console.error('Error in GET /api/experiments:', error);
       res.status(500).json({ error: 'Failed to fetch history' });
     }
   });
 
   app.get('/api/experiments/:id', (req, res) => {
+    console.log(`GET /api/experiments/${req.params.id}`);
     try {
       const row = db.prepare('SELECT * FROM experiments WHERE id = ?').get(req.params.id);
       if (!row) {
@@ -83,11 +86,13 @@ async function startServer() {
       }
       res.json(row);
     } catch (error) {
+      console.error(`Error in GET /api/experiments/${req.params.id}:`, error);
       res.status(500).json({ error: 'Failed to fetch experiment' });
     }
   });
 
   app.post('/api/experiments', (req, res) => {
+    console.log('POST /api/experiments');
     const { 
       dataset_name, sample_size, train_test_split, optimizer, 
       hidden_size, learning_rate, epochs, batch_size,
@@ -112,9 +117,10 @@ async function startServer() {
         log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance,
         typeof logs === 'string' ? logs : JSON.stringify(logs)
       );
+      console.log('Successfully saved experiment');
       res.json({ success: true });
     } catch (error) {
-      console.error(error);
+      console.error('Error in POST /api/experiments:', error);
       res.status(500).json({ error: 'Failed to save experiment' });
     }
   });

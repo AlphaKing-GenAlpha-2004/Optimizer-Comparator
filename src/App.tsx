@@ -66,7 +66,7 @@ export default function App() {
   const [currentOptimizer, setCurrentOptimizer] = useState<OptimizerType | null>(null);
   const [currentEpoch, setCurrentEpoch] = useState(0);
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (retries = 3) => {
     try {
       const res = await fetch('/api/experiments');
       if (!res.ok) {
@@ -79,6 +79,10 @@ export default function App() {
       // If we get an HTML response, it might be the SPA fallback
       if (e.message?.includes('Unexpected token')) {
         console.warn('Received non-JSON response from API. Check server routes.');
+      }
+      if (retries > 0) {
+        console.log(`Retrying fetch history... (${retries} attempts left)`);
+        setTimeout(() => fetchHistory(retries - 1), 2000);
       }
     }
   };
@@ -441,8 +445,8 @@ export default function App() {
           if (watchdog) clearTimeout(watchdog);
           watchdog = setTimeout(() => {
             worker.terminate();
-            reject(new Error(`Optimizer ${opt} timed out (no progress for 600s).`));
-          }, 600000); // Increased to 600 seconds of inactivity
+            reject(new Error(`Optimizer ${opt} timed out (no progress for 1200s).`));
+          }, 1200000); // Increased to 1200 seconds (20 minutes) of inactivity
         };
 
         resetWatchdog();
