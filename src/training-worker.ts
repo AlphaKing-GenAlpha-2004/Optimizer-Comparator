@@ -268,11 +268,34 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
     );
 
     // Fast eval for training accuracy
-    const evalSize = Math.min(1000, testSamples);
-    let correct = 0;
+    const evalSize = Math.min(1000, trainSamples);
+    let trainCorrect = 0;
     const evalBatchSize = 100;
     for (let j = 0; j < evalSize; j += evalBatchSize) {
       const currentEvalBatchSize = Math.min(evalBatchSize, evalSize - j);
+      const xEval = new Array(currentEvalBatchSize);
+      const yEval = new Array(currentEvalBatchSize);
+      
+      for (let k = 0; k < currentEvalBatchSize; k++) {
+        const idx = Math.floor(Math.random() * trainSamples);
+        xEval[k] = Array.from(X_train.subarray(idx * inputSize, (idx + 1) * inputSize));
+        yEval[k] = y_train[idx];
+      }
+      
+      const { a2: a2Eval } = { a2: softmax(math.add(math.multiply(relu(math.add(math.multiply(xEval, w1 as any), b1 as any)), w2 as any), b2 as any)) };
+      
+      a2Eval.forEach((pred: any, idx: number) => {
+        const predLabel = pred.indexOf(Math.max(...pred));
+        if (predLabel === yEval[idx]) trainCorrect++;
+      });
+    }
+    const trainAccuracy = trainCorrect / evalSize;
+
+    // Fast eval for testing accuracy
+    const testEvalSize = Math.min(1000, testSamples);
+    let testCorrect = 0;
+    for (let j = 0; j < testEvalSize; j += evalBatchSize) {
+      const currentEvalBatchSize = Math.min(evalBatchSize, testEvalSize - j);
       const xEval = new Array(currentEvalBatchSize);
       const yEval = new Array(currentEvalBatchSize);
       
@@ -286,15 +309,17 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       
       a2Eval.forEach((pred: any, idx: number) => {
         const predLabel = pred.indexOf(Math.max(...pred));
-        if (predLabel === yEval[idx]) correct++;
+        if (predLabel === yEval[idx]) testCorrect++;
       });
     }
-    const accuracy = correct / evalSize;
+    const testAccuracy = testCorrect / testEvalSize;
 
     const metric = {
       epoch,
       loss: avgLoss,
-      accuracy,
+      accuracy: testAccuracy, // Legacy support
+      trainAccuracy,
+      testAccuracy,
       gradientNorm: avgGradNorm,
       updateRatio: totalUpdateNorm / batchCount,
       convergenceSpeed: metrics.length > 0 ? metrics[metrics.length - 1].loss - avgLoss : 0,

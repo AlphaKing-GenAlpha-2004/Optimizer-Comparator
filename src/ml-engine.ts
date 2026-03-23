@@ -13,7 +13,9 @@ export interface ModelParams {
 export interface TrainingMetric {
   epoch: number;
   loss: number;
-  accuracy: number;
+  accuracy: number; // Keeping for backward compatibility if needed, but will use the others
+  trainAccuracy: number;
+  testAccuracy: number;
   gradientNorm: number;
   updateRatio: number;
   convergenceSpeed: number;

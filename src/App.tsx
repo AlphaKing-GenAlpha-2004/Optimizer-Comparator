@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github, Type
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import InfoModal from './components/InfoModal';
@@ -33,6 +33,8 @@ export default function App() {
   const [target, setTarget] = useState<string>('');
   const [trainSampleSize, setTrainSampleSize] = useState<number>(10000);
   const [testSampleSize, setTestSampleSize] = useState<number>(2000);
+  const [isTextEntryOpen, setIsTextEntryOpen] = useState(false);
+  const [textEntryData, setTextEntryData] = useState({ train: '', test: '' });
   
   const [params, setParams] = useState<ModelParams>({
     hiddenSize: 64,
@@ -167,6 +169,15 @@ export default function App() {
     processFile(file, type);
   };
 
+  const handleTextEntry = (type: 'train' | 'test') => {
+    const blob = new Blob([textEntryData[type]], { type: 'text/csv' });
+    const file = new File([blob], `manual_${type}.csv`, { type: 'text/csv' });
+    if (type === 'train') setTrainFile(file);
+    else setTestFile(file);
+    processFile(file, type);
+    setIsTextEntryOpen(false);
+  };
+
   const processFile = async (file: File, type: 'train' | 'test') => {
     setIsProcessing(true);
     setError(null);
@@ -193,6 +204,7 @@ export default function App() {
       dynamicTyping: true,
       skipEmptyLines: true,
       worker: true,
+      chunkSize: 1024 * 1024 * 10, // 10MB chunks for better performance with large files
       step: (results, parser) => {
         const row = results.data;
         if (rowCount === 0) {
@@ -207,29 +219,45 @@ export default function App() {
           featCols = cols.slice(1);   // remaining columns are features
           
           const inputSize = featCols.length;
+          
+          // Memory Guard: Check if we can allocate the required TypedArrays
+          const totalElements = maxSamples * inputSize;
+          if (totalElements > 250000000) { // ~1GB limit for safety in browser
+            setError(`Dataset too large for browser memory. Reducing samples to ${Math.floor(250000000 / inputSize).toLocaleString()}.`);
+            // We'll continue with a smaller maxSamples
+          }
+
           let newHiddenSize;
           if (inputSize <= 1000) {
-            newHiddenSize = 64;        // MNIST-like datasets
+            newHiddenSize = 64; // MNIST-like
           } else if (inputSize <= 3000) {
-            newHiddenSize = 256;       // CIFAR-like datasets
+            newHiddenSize = 256; // CIFAR-10-like
+          } else if (inputSize <= 4000) {
+            newHiddenSize = 512; // CIFAR-100-like
           } else {
-            newHiddenSize = 512;       // large datasets
+            newHiddenSize = 1024; // High-res
           }
           
           if (type === 'train') {
             setFeatures(featCols);
             setTarget(targetCol);
             setParams(prev => ({ ...prev, hiddenSize: newHiddenSize }));
-            if (inputSize > 2000) {
-              console.log("Detected high-dimensional image dataset (likely RGB)");
-            }
           }
 
-          X = new Float32Array(maxSamples * featCols.length);
-          y = new Int32Array(maxSamples);
+          try {
+            X = new Float32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)) * inputSize);
+            y = new Int32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)));
+          } catch (e) {
+            setError("Memory allocation failed. Try reducing sample size.");
+            parser.abort();
+            setIsProcessing(false);
+            return;
+          }
         }
 
-        if (rowCount < maxSamples) {
+        const effectiveMax = X ? X.length / featCols.length : 0;
+
+        if (rowCount < effectiveMax) {
           // Store first 10 rows for preview
           if (rowCount < 10) {
             const previewRow: any = {};
@@ -243,7 +271,9 @@ export default function App() {
           featCols.forEach((f, j) => {
             let val = parseFloat(row[f]);
             if (!Number.isFinite(val)) val = 0;
-            val /= 255;
+            // Auto-normalization check: if values are > 1, assume 0-255 range
+            // This is a heuristic, but common for image datasets
+            if (val > 1) val /= 255;
             if (X) X[rowCount * featCols.length + j] = val;
           });
 
@@ -255,13 +285,13 @@ export default function App() {
         }
 
         rowCount++;
-        if (rowCount % 1000 === 0) {
+        if (rowCount % 5000 === 0) {
           const progress = Math.min(99, (rowCount / maxSamples) * 100);
           setParseProgress(progress);
-          setStatusMessage(`Parsing ${file.name}... ${rowCount.toLocaleString()} rows`);
+          setStatusMessage(`Streaming ${file.name}... ${rowCount.toLocaleString()} rows (${(rowCount * featCols.length * 4 / (1024*1024)).toFixed(1)} MB in memory)`);
         }
         
-        if (rowCount >= maxSamples) {
+        if (rowCount >= effectiveMax) {
           parser.abort();
         }
       },
@@ -296,17 +326,17 @@ export default function App() {
         }
 
         // Fisher-Yates Shuffle to prevent class imbalance from sorted datasets
+        // Optimized for large datasets to avoid UI freeze
         if (X && y && rowCount > 0) {
           const featCount = featCols.length;
-          for (let i = rowCount - 1; i > 0; i--) {
+          const shuffleLimit = Math.min(rowCount, 100000); // Limit shuffle for very large datasets to keep UI responsive
+          for (let i = shuffleLimit - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             
-            // Swap y[i] and y[j]
             const tempY = y[i];
             y[i] = y[j];
             y[j] = tempY;
             
-            // Swap X rows i and j
             for (let k = 0; k < featCount; k++) {
               const tempX = X[i * featCount + k];
               X[i * featCount + k] = X[j * featCount + k];
@@ -317,17 +347,21 @@ export default function App() {
 
         if (type === 'train') {
           setTrainData(tempRows);
-          setTrainTensors({ 
-            X: X!.slice(0, rowCount * featCols.length), 
-            y: y!.slice(0, rowCount) 
-          });
+          if (X && y) {
+            setTrainTensors({ 
+              X: X.subarray(0, rowCount * featCols.length), 
+              y: y.subarray(0, rowCount) 
+            });
+          }
           if (rowCount >= 100000) setShowWarning(true);
         } else {
           setTestData(tempRows);
-          setTestTensors({ 
-            X: X!.slice(0, rowCount * featCols.length), 
-            y: y!.slice(0, rowCount) 
-          });
+          if (X && y) {
+            setTestTensors({ 
+              X: X.subarray(0, rowCount * featCols.length), 
+              y: y.subarray(0, rowCount) 
+            });
+          }
         }
 
         setIsProcessing(false);
@@ -758,6 +792,7 @@ export default function App() {
 
     const chartIds = [
       { id: 'report-chart-loss', title: 'Loss & Accuracy' },
+      { id: 'report-chart-train-test', title: 'Train vs Test Accuracy' },
       { id: 'report-chart-grads', title: 'Gradients & Updates' },
       { id: 'report-chart-speed', title: 'Convergence Speed' },
       { id: 'report-chart-stability', title: 'Training Stability' },
@@ -789,14 +824,15 @@ export default function App() {
     const logData = logs.map((m: any) => [
       m.epoch,
       safeFixed(m.loss, 4),
-      safeFixed(m.accuracy, 2, 100, '%'),
+      safeFixed(m.trainAccuracy || m.accuracy, 2, 100, '%'),
+      safeFixed(m.testAccuracy || m.accuracy, 2, 100, '%'),
       safeFixed(m.gradientNorm, 4),
       safeFixed(m.updateRatio, 6)
     ]);
 
     autoTable(doc, {
       startY: 30,
-      head: [["Epoch", "Loss", "Accuracy", "Grad Norm", "Update Ratio"]],
+      head: [["Epoch", "Loss", "Train Acc", "Test Acc", "Grad Norm", "Update Ratio"]],
       body: logData,
       theme: 'striped',
       headStyles: { fillColor: [28, 25, 23] }
@@ -812,10 +848,14 @@ export default function App() {
     for (let i = 0; i < epochs; i++) {
       const entry: any = { epoch: i + 1 };
       results.forEach(res => {
-        entry[`${res.optimizer}_loss`] = res.metrics[i].loss;
-        entry[`${res.optimizer}_acc`] = res.metrics[i].accuracy;
-        entry[`${res.optimizer}_grad`] = res.metrics[i].gradientNorm;
-        entry[`${res.optimizer}_ratio`] = res.metrics[i].updateRatio;
+        if (res.metrics[i]) {
+          entry[`${res.optimizer}_loss`] = res.metrics[i].loss;
+          entry[`${res.optimizer}_acc`] = res.metrics[i].accuracy;
+          entry[`${res.optimizer}_train_acc`] = res.metrics[i].trainAccuracy || res.metrics[i].accuracy;
+          entry[`${res.optimizer}_test_acc`] = res.metrics[i].testAccuracy || res.metrics[i].accuracy;
+          entry[`${res.optimizer}_grad`] = res.metrics[i].gradientNorm;
+          entry[`${res.optimizer}_ratio`] = res.metrics[i].updateRatio;
+        }
       });
       data.push(entry);
     }
@@ -860,67 +900,137 @@ export default function App() {
 
         {/* Dataset Upload */}
         <section className="space-y-4">
-          <div className="flex items-center gap-2 text-xs font-semibold text-[#78716C] uppercase tracking-wider">
-            <Upload className="w-3 h-3" />
-            Dataset Upload
-          </div>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">Training CSV</label>
-              <input 
-                type="file" accept=".csv" 
-                onChange={(e) => handleFileUpload(e, 'train')}
-                className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
-              />
+          <div className="flex items-center justify-between text-xs font-semibold text-[#78716C] uppercase tracking-wider">
+            <div className="flex items-center gap-2">
+              <Upload className="w-3 h-3" />
+              Dataset Entry
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Testing CSV</label>
-              <input 
-                type="file" accept=".csv" 
-                onChange={(e) => handleFileUpload(e, 'test')}
-                className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
-              />
-            </div>
+            <button 
+              onClick={() => setIsTextEntryOpen(!isTextEntryOpen)}
+              className="text-[10px] hover:text-[#1C1917] transition-colors flex items-center gap-1"
+            >
+              <Type className="w-3 h-3" />
+              {isTextEntryOpen ? 'Hide Text Entry' : 'Text Entry'}
+            </button>
           </div>
+
+          <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
+            <div className="flex items-center gap-2 text-blue-800 font-bold text-[10px] uppercase mb-1">
+              <Info className="w-3 h-3" />
+              Supported Formats
+            </div>
+            <p className="text-[9px] text-blue-700 leading-tight">
+              Supports CSV/TXT files with labels in the 1st column. Perfect for <b>MNIST</b> (784 features) and <b>CIFAR-100</b> (3072 features).
+            </p>
+          </div>
+          
+          {isTextEntryOpen ? (
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold text-[#78716C] uppercase">Training Data (CSV Format)</label>
+                <textarea 
+                  value={textEntryData.train}
+                  onChange={(e) => setTextEntryData({...textEntryData, train: e.target.value})}
+                  placeholder="label,feat1,feat2...&#10;0,0.5,0.2...&#10;1,0.1,0.8..."
+                  className="w-full h-32 bg-[#F5F5F4] border-none rounded-xl p-3 text-xs font-mono focus:ring-1 ring-[#1C1917] resize-none"
+                />
+                <button 
+                  onClick={() => handleTextEntry('train')}
+                  disabled={!textEntryData.train.trim()}
+                  className="w-full py-2 bg-[#1C1917] text-white text-[10px] font-bold rounded-lg hover:bg-black disabled:opacity-50 transition-all"
+                >
+                  Process Training Text
+                </button>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold text-[#78716C] uppercase">Testing Data (CSV Format)</label>
+                <textarea 
+                  value={textEntryData.test}
+                  onChange={(e) => setTextEntryData({...textEntryData, test: e.target.value})}
+                  placeholder="label,feat1,feat2...&#10;0,0.4,0.3...&#10;1,0.2,0.7..."
+                  className="w-full h-32 bg-[#F5F5F4] border-none rounded-xl p-3 text-xs font-mono focus:ring-1 ring-[#1C1917] resize-none"
+                />
+                <button 
+                  onClick={() => handleTextEntry('test')}
+                  disabled={!textEntryData.test.trim()}
+                  className="w-full py-2 bg-[#1C1917] text-white text-[10px] font-bold rounded-lg hover:bg-black disabled:opacity-50 transition-all"
+                >
+                  Process Testing Text
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">Training CSV</label>
+                <input 
+                  type="file" accept=".csv,.txt" 
+                  onChange={(e) => handleFileUpload(e, 'train')}
+                  className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
+                />
+                {trainFile && <div className="mt-1 text-[10px] text-emerald-600 font-bold">Loaded: {trainFile.name} ({(trainFile.size / (1024*1024)).toFixed(2)} MB)</div>}
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Testing CSV</label>
+                <input 
+                  type="file" accept=".csv,.txt" 
+                  onChange={(e) => handleFileUpload(e, 'test')}
+                  className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
+                />
+                {testFile && <div className="mt-1 text-[10px] text-emerald-600 font-bold">Loaded: {testFile.name} ({(testFile.size / (1024*1024)).toFixed(2)} MB)</div>}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Sample Sizes */}
         <section className="space-y-4">
           <div className="flex items-center gap-2 text-xs font-semibold text-[#78716C] uppercase tracking-wider">
             <BarChart3 className="w-3 h-3" />
-            Sampling
+            Sampling & Large File Support
           </div>
           <div className="space-y-4">
             <div className="space-y-2">
               <div className="flex justify-between text-[11px] font-medium">
                 <span>Training Samples</span>
-                <span className="text-[#78716C]">{trainSampleSize.toLocaleString()}</span>
+                <span className="text-[#78716C]">{trainSampleSize >= 1000000 ? `${(trainSampleSize/1000000).toFixed(1)}M` : trainSampleSize.toLocaleString()}</span>
               </div>
               <input 
-                type="range" min="1000" max="100000" step="1000" value={trainSampleSize}
+                type="range" min="1000" max="1000000" step="1000" value={trainSampleSize}
                 onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
                 <span>1k</span>
-                <span>100k</span>
+                <span>1M</span>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-[11px] font-medium">
                 <span>Testing Samples</span>
-                <span className="text-[#78716C]">{testSampleSize.toLocaleString()}</span>
+                <span className="text-[#78716C]">{testSampleSize >= 1000000 ? `${(testSampleSize/1000000).toFixed(1)}M` : testSampleSize.toLocaleString()}</span>
               </div>
               <input 
-                type="range" min="500" max="50000" step="500" value={testSampleSize}
+                type="range" min="500" max="500000" step="500" value={testSampleSize}
                 onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
                 <span>500</span>
-                <span>50k</span>
+                <span>500k</span>
               </div>
             </div>
+            {(trainFile?.size || 0) > 500 * 1024 * 1024 && (
+              <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                <div className="flex items-center gap-2 text-amber-800 font-bold text-[10px] uppercase mb-1">
+                  <AlertCircle className="w-3 h-3" />
+                  Large File Detected
+                </div>
+                <p className="text-[9px] text-amber-700 leading-tight">
+                  Files over 500MB are processed using streaming. To prevent memory issues, we recommend keeping samples under 500k.
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -1319,6 +1429,59 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
             </section>
+
+            {/* New Train vs Test Accuracy Chart */}
+            <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm col-span-2">
+              <h3 className="font-bold mb-6 flex items-center gap-2">
+                <Activity className="w-4 h-4" /> 
+                Train vs Test Accuracy Comparison (All Optimizers)
+              </h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} domain={[0, 1]} />
+                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                    <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
+                    {results.map((res, i) => {
+                      const colors = ['#1C1917', '#D97706', '#059669', '#2563EB'];
+                      return (
+                        <React.Fragment key={res.optimizer}>
+                          <Line 
+                            type="monotone" 
+                            dataKey={`${res.optimizer}_train_acc`} 
+                            stroke={colors[i]} 
+                            strokeWidth={2} 
+                            strokeDasharray="5 5"
+                            dot={false}
+                            name={`${res.optimizer} (Train)`}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey={`${res.optimizer}_test_acc`} 
+                            stroke={colors[i]} 
+                            strokeWidth={2} 
+                            dot={false}
+                            name={`${res.optimizer} (Test)`}
+                          />
+                        </React.Fragment>
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 flex gap-4 text-[10px] font-medium text-[#78716C] justify-center">
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-0.5 bg-[#78716C] border-t border-dashed" />
+                  <span>Dashed: Training Accuracy</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-0.5 bg-[#78716C]" />
+                  <span>Solid: Testing Accuracy</span>
+                </div>
+              </div>
+            </section>
           </div>
         )}
 
@@ -1435,31 +1598,160 @@ export default function App() {
 
         {/* Analysis Section */}
         {bestOptimizer && (
-          <div className="grid grid-cols-3 gap-8">
-            <section className="col-span-1 bg-emerald-600 text-white rounded-2xl p-6 shadow-lg">
-              <h3 className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">Best Optimizer</h3>
-              <div className="text-3xl font-black mb-4">{bestOptimizer.optimizer}</div>
-              <p className="text-sm leading-relaxed opacity-90">
-                The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 4)}</span>.
-              </p>
-            </section>
-
-            <section className="col-span-2 bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm">
-              <h3 className="font-bold mb-4 flex items-center gap-2">
-                <Info className="w-4 h-4 text-[#78716C]" /> Optimizer Performance Analysis
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                {results.map(res => (
-                  <div key={res.optimizer} className="p-3 bg-[#F5F5F4] rounded-xl">
-                    <div className="text-xs font-bold mb-1">{res.optimizer}</div>
-                    <p className="text-[11px] text-[#78716C]">
-                      {res.optimizer === 'Adam' && "Adam achieved the highest accuracy and fastest convergence through adaptive momentum."}
-                      {res.optimizer === 'SGD' && "SGD converged slower but produced stable gradients, suitable for simpler landscapes."}
-                      {res.optimizer === 'RMSProp' && "RMSProp showed faster convergence compared to SGD by scaling gradients."}
-                      {res.optimizer === 'Adagrad' && "Adagrad reduced the learning rate over time, effectively handling sparse features."}
-                    </p>
+          <div className="space-y-8">
+            <div className="grid grid-cols-3 gap-8">
+              <section className="col-span-1 bg-emerald-600 text-white rounded-2xl p-6 shadow-lg flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">Best Optimizer</h3>
+                  <div className="text-3xl font-black mb-4">{bestOptimizer.optimizer}</div>
+                  <p className="text-sm leading-relaxed opacity-90">
+                    The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 4)}</span>.
+                  </p>
+                </div>
+                <div className="mt-6 pt-6 border-t border-white/20">
+                  <div className="flex justify-between items-end">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold opacity-60">Log Loss</div>
+                      <div className="text-xl font-black">{safeFixed(bestOptimizer.logLoss, 4)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold opacity-60">F1 Score</div>
+                      <div className="text-xl font-black">{safeFixed(bestOptimizer.f1Score, 2, 100, '%')}</div>
+                    </div>
                   </div>
-                ))}
+                </div>
+              </section>
+
+              <section className="col-span-2 bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm">
+                <h3 className="font-bold mb-4 flex items-center gap-2">
+                  <Info className="w-4 h-4 text-[#78716C]" /> Optimizer Performance Analysis
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {results.map(res => (
+                    <div key={res.optimizer} className={cn("p-3 rounded-xl transition-all", bestOptimizer.optimizer === res.optimizer ? "bg-emerald-50 border border-emerald-100" : "bg-[#F5F5F4]")}>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="text-xs font-bold">{res.optimizer}</div>
+                        {bestOptimizer.optimizer === res.optimizer && <span className="text-[8px] bg-emerald-600 text-white px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter">Winner</span>}
+                      </div>
+                      <p className="text-[11px] text-[#78716C] leading-tight">
+                        {res.optimizer === 'Adam' && "Adam achieved the highest accuracy and fastest convergence through adaptive momentum."}
+                        {res.optimizer === 'SGD' && "SGD converged slower but produced stable gradients, suitable for simpler landscapes."}
+                        {res.optimizer === 'RMSProp' && "RMSProp showed faster convergence compared to SGD by scaling gradients."}
+                        {res.optimizer === 'Adagrad' && "Adagrad reduced the learning rate over time, effectively handling sparse features."}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            {/* Best Performer Heatmap */}
+            <section className="bg-white rounded-2xl p-8 border border-[#E7E5E4] shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <Grid3X3 className="w-5 h-5 text-emerald-600" /> 
+                    Best Performer Confusion Matrix: {bestOptimizer.optimizer}
+                  </h3>
+                  <p className="text-xs text-[#78716C] mt-1">Heatmap visualization of classification performance across all categories.</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-emerald-600 rounded-sm"></div>
+                    <span className="text-[10px] font-bold text-[#78716C] uppercase tracking-wider">Correct</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#1C1917]/20 rounded-sm"></div>
+                    <span className="text-[10px] font-bold text-[#78716C] uppercase tracking-wider">Error Intensity</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto pb-4">
+                <div className="min-w-[800px] flex flex-col items-center">
+                  {classes.length > 25 ? (
+                    <div className="w-full p-12 text-center bg-[#F5F5F4] rounded-2xl border border-dashed border-[#E7E5E4]">
+                      <AlertCircle className="w-10 h-10 mx-auto mb-4 text-[#78716C]" />
+                      <p className="text-lg font-black text-[#1C1917]">High-Dimensionality Matrix</p>
+                      <p className="text-sm text-[#78716C] mt-2 max-w-md mx-auto">This dataset has {classes.length} classes. Rendering a full heatmap is disabled to maintain performance.</p>
+                      <div className="mt-8 grid grid-cols-2 gap-6 max-w-lg mx-auto">
+                        <div className="p-6 bg-white rounded-2xl border border-[#E7E5E4] shadow-sm">
+                          <div className="text-[10px] text-[#78716C] uppercase font-bold mb-2 tracking-widest">Total Predictions</div>
+                          <div className="text-3xl font-black">{bestOptimizer.confusionMatrix.flat().reduce((a, b) => a + b, 0)}</div>
+                        </div>
+                        <div className="p-6 bg-white rounded-2xl border border-[#E7E5E4] shadow-sm">
+                          <div className="text-[10px] text-[#78716C] uppercase font-bold mb-2 tracking-widest">Correct Hits</div>
+                          <div className="text-3xl font-black text-emerald-600">{bestOptimizer.confusionMatrix.reduce((acc, row, i) => acc + row[i], 0)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative inline-block">
+                      {/* X-Axis Label (Top) */}
+                      <div className="flex justify-center mb-4">
+                        <span className="text-[10px] font-black text-[#78716C] uppercase tracking-[0.2em] bg-[#F5F5F4] px-4 py-1 rounded-full">Predicted Class</span>
+                      </div>
+                      
+                      <div className="flex">
+                        {/* Y-Axis Label (Left) */}
+                        <div className="flex items-center mr-4">
+                          <span className="text-[10px] font-black text-[#78716C] uppercase tracking-[0.2em] bg-[#F5F5F4] px-4 py-1 rounded-full [writing-mode:vertical-lr] rotate-180">Actual Class</span>
+                        </div>
+
+                        <div className="flex flex-col">
+                          {/* Column Headers */}
+                          <div className="grid ml-[100px] mb-2" style={{ gridTemplateColumns: `repeat(${classes.length}, 40px)` }}>
+                            {classes.map((c, i) => (
+                              <div key={i} className="text-[9px] font-bold text-[#78716C] text-center truncate px-1 -rotate-45 origin-bottom-left h-8" title={c}>
+                                {c}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex">
+                            {/* Row Headers */}
+                            <div className="flex flex-col justify-around mr-2 w-[100px]">
+                              {classes.map((c, i) => (
+                                <div key={i} className="text-[9px] font-bold text-[#78716C] text-right truncate pr-2 h-10 flex items-center justify-end" title={c}>
+                                  {c}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Heatmap Grid */}
+                            <div className="grid gap-1 bg-[#F5F5F4] p-1 rounded-lg shadow-inner" style={{ gridTemplateColumns: `repeat(${classes.length}, 40px)` }}>
+                              {bestOptimizer.confusionMatrix.map((row, i) => (
+                                row.map((val, j) => {
+                                  const maxInRow = Math.max(...row);
+                                  const intensity = maxInRow > 0 ? val / maxInRow : 0;
+                                  const isCorrect = i === j;
+                                  
+                                  return (
+                                    <div 
+                                      key={`${i}-${j}`}
+                                      className={cn(
+                                        "w-10 h-10 flex items-center justify-center text-[10px] font-black rounded-md transition-all duration-300 hover:scale-110 hover:z-10 cursor-default",
+                                        isCorrect ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20" : "text-[#1C1917]"
+                                      )}
+                                      style={{ 
+                                        backgroundColor: isCorrect ? undefined : `rgba(28, 25, 23, ${intensity * 0.3})`,
+                                        opacity: val === 0 ? 0.2 : 1,
+                                        border: isCorrect ? '2px solid rgba(255,255,255,0.2)' : 'none'
+                                      }}
+                                      title={`Actual: ${classes[i]}, Predicted: ${classes[j]}, Count: ${val}`}
+                                    >
+                                      {val > 0 ? val : ''}
+                                    </div>
+                                  );
+                                })
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </section>
           </div>
@@ -1604,6 +1896,25 @@ export default function App() {
                           <Tooltip />
                           <Line type="monotone" dataKey="gradientNorm" stroke="#D97706" strokeWidth={2} dot={false} name="Grad Norm" />
                           <Line type="monotone" dataKey="updateRatio" stroke="#2563EB" strokeWidth={2} dot={false} name="Update Ratio" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl col-span-2" id="report-chart-train-test">
+                    <h4 className="font-bold mb-4 text-sm flex items-center gap-1">
+                      Train vs Test Accuracy
+                    </h4>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={selectedExperiment.logs}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
+                          <XAxis dataKey="epoch" tick={{fontSize: 10}} />
+                          <YAxis tick={{fontSize: 10}} domain={[0, 1]} />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="trainAccuracy" stroke="#059669" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Train Accuracy" />
+                          <Line type="monotone" dataKey="testAccuracy" stroke="#2563EB" strokeWidth={2} dot={false} name="Test Accuracy" />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
