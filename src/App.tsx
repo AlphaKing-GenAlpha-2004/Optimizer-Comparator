@@ -158,10 +158,10 @@ export default function App() {
   }, [trainSampleSize]);
 
   useEffect(() => {
-    if (testFile) {
+    if (testFile && features.length > 0) {
       processFile(testFile, 'test');
     }
-  }, [testSampleSize]);
+  }, [testSampleSize, features, target]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'train' | 'test') => {
     const file = e.target.files?.[0];
@@ -213,14 +213,26 @@ export default function App() {
         const row = results.data;
         if (rowCount === 0) {
           const cols = Object.keys(row || {});
-          if (cols.length < 2) {
-            setError("Dataset must have at least one feature and one target column.");
-            parser.abort();
-            setIsProcessing(false);
-            return;
+          
+          if (type === 'test') {
+            if (features.length === 0) {
+              setError("Please upload a training dataset first to define features and classes.");
+              parser.abort();
+              setIsProcessing(false);
+              return;
+            }
+            featCols = features;
+            targetCol = target || cols[0];
+          } else {
+            if (cols.length < 2) {
+              setError("Dataset must have at least one feature and one target column.");
+              parser.abort();
+              setIsProcessing(false);
+              return;
+            }
+            targetCol = cols[0];        // first column is label
+            featCols = cols.slice(1);   // remaining columns are features
           }
-          targetCol = cols[0];        // first column is label
-          featCols = cols.slice(1);   // remaining columns are features
           
           const inputSize = featCols.length;
           
@@ -390,13 +402,24 @@ export default function App() {
       return;
     }
 
-    if (params.epochs < 1 || params.epochs > 100) {
-      setError("Number of epochs must be between 1 and 100.");
+    if (params.epochs < 1 || params.epochs > 5000) {
+      setError("Number of epochs must be between 1 and 5000.");
       return;
     }
     
     setIsTraining(true);
     setError(null);
+
+    // Dimension Check (Step 12)
+    const trainInputSize = trainTensors.X.length / trainTensors.y.length;
+    const testInputSize = testTensors.X.length / testTensors.y.length;
+    
+    if (trainInputSize !== features.length || testInputSize !== features.length) {
+      setError(`Dimension mismatch: Train features (${trainInputSize}) vs Test features (${testInputSize}) vs Expected (${features.length}). Please re-upload datasets.`);
+      setIsTraining(false);
+      return;
+    }
+
     setIsPaused(false);
     isPausedRef.current = false;
     stopTrainingRef.current = false;
@@ -995,32 +1018,52 @@ export default function App() {
           </div>
           <div className="space-y-4">
             <div className="space-y-2">
-              <div className="flex justify-between text-[11px] font-medium">
+              <div className="flex justify-between items-center text-[11px] font-medium">
                 <span>Training Samples</span>
-                <span className="text-[#78716C]">{trainSampleSize >= 1000000 ? `${(trainSampleSize/1000000).toFixed(1)}M` : trainSampleSize.toLocaleString()}</span>
+                <div className="flex items-center gap-1">
+                  <input 
+                    type="number"
+                    min="50"
+                    max="1000000"
+                    value={trainSampleSize}
+                    onChange={(e) => setTrainSampleSize(Math.max(50, parseInt(e.target.value) || 0))}
+                    className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
+                  />
+                  <span className="text-[10px] text-[#A8A29E]">{trainSampleSize >= 1000000 ? `${(trainSampleSize/1000000).toFixed(1)}M` : ''}</span>
+                </div>
               </div>
               <input 
-                type="range" min="1000" max="1000000" step="1000" value={trainSampleSize}
+                type="range" min="50" max="1000000" step="50" value={trainSampleSize}
                 onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
-                <span>1k</span>
+                <span>50</span>
                 <span>1M</span>
               </div>
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between text-[11px] font-medium">
+              <div className="flex justify-between items-center text-[11px] font-medium">
                 <span>Testing Samples</span>
-                <span className="text-[#78716C]">{testSampleSize >= 1000000 ? `${(testSampleSize/1000000).toFixed(1)}M` : testSampleSize.toLocaleString()}</span>
+                <div className="flex items-center gap-1">
+                  <input 
+                    type="number"
+                    min="20"
+                    max="500000"
+                    value={testSampleSize}
+                    onChange={(e) => setTestSampleSize(Math.max(20, parseInt(e.target.value) || 0))}
+                    className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
+                  />
+                  <span className="text-[10px] text-[#A8A29E]">{testSampleSize >= 1000000 ? `${(testSampleSize/1000000).toFixed(1)}M` : ''}</span>
+                </div>
               </div>
               <input 
-                type="range" min="500" max="500000" step="500" value={testSampleSize}
+                type="range" min="20" max="500000" step="10" value={testSampleSize}
                 onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
-                <span>500</span>
+                <span>20</span>
                 <span>500k</span>
               </div>
             </div>
@@ -1081,7 +1124,7 @@ export default function App() {
             <div className="space-y-1">
               <label className="text-[11px] font-medium">Epochs</label>
               <input 
-                type="number" value={params.epochs || ''} 
+                type="number" min="1" max="5000" value={params.epochs || ''} 
                 onChange={e => {
                   const val = parseInt(e.target.value);
                   setParams({...params, epochs: isNaN(val) ? 0 : val});

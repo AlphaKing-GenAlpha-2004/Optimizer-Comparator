@@ -258,11 +258,11 @@ export class NeuralNetwork {
     const accuracy = correct / numSamples;
     const logLoss = totalLogLoss / numSamples;
 
-    // Calculate Support-Weighted Precision, Recall, F1
-    let weightedPrecision = 0;
-    let weightedRecall = 0;
-    let weightedF1 = 0;
-    let totalSupport = 0;
+    // Calculate Macro-averaged Precision, Recall, F1
+    let macroPrecision = 0;
+    let macroRecall = 0;
+    let macroF1 = 0;
+    let classesWithSupport = 0;
 
     for (let i = 0; i < numClasses; i++) {
       const tp = confusionMatrix[i][i];
@@ -280,16 +280,16 @@ export class NeuralNetwork {
         const r = tp / actual_i;
         const f = (p + r) > 0 ? (2 * p * r) / (p + r) : 0;
 
-        weightedPrecision += p * actual_i;
-        weightedRecall += r * actual_i;
-        weightedF1 += f * actual_i;
-        totalSupport += actual_i;
+        macroPrecision += p;
+        macroRecall += r;
+        macroF1 += f;
+        classesWithSupport++;
       }
     }
 
-    const precision = totalSupport > 0 ? weightedPrecision / totalSupport : 0;
-    const recall = totalSupport > 0 ? weightedRecall / totalSupport : 0;
-    const f1Score = totalSupport > 0 ? weightedF1 / totalSupport : 0;
+    const precision = classesWithSupport > 0 ? macroPrecision / classesWithSupport : 0;
+    const recall = classesWithSupport > 0 ? macroRecall / classesWithSupport : 0;
+    const f1Score = classesWithSupport > 0 ? macroF1 / classesWithSupport : 0;
 
     return {
       accuracy,

@@ -410,11 +410,11 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
   }
   const testAccuracy = totalCorrect / testSamples;
 
-  // Step 5 & 6: Compute Per-Class and Weighted Metrics
-  let weightedPrecision = 0;
-  let weightedRecall = 0;
-  let weightedF1 = 0;
-  let totalSupport = 0;
+  // Step 5 & 6: Compute Macro-averaged Precision, Recall, F1
+  let macroPrecision = 0;
+  let macroRecall = 0;
+  let macroF1 = 0;
+  let classesWithSupport = 0;
 
   for (let i = 0; i < actualOutputSize; i++) {
     // tp: True Positives for class i
@@ -434,17 +434,16 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       const r = tp / support; 
       const f = (p + r) > 0 ? (2 * p * r) / (p + r) : 0;
       
-      weightedPrecision += p * support;
-      weightedRecall += r * support;
-      weightedF1 += f * support;
-      totalSupport += support;
+      macroPrecision += p;
+      macroRecall += r;
+      macroF1 += f;
+      classesWithSupport++;
     }
   }
 
-  // Weighted averaging: sum of (metric * support) / total support
-  const precision = totalSupport > 0 ? weightedPrecision / totalSupport : 0;
-  const recall = totalSupport > 0 ? weightedRecall / totalSupport : 0;
-  const f1Score = totalSupport > 0 ? weightedF1 / totalSupport : 0;
+  const precision = classesWithSupport > 0 ? macroPrecision / classesWithSupport : 0;
+  const recall = classesWithSupport > 0 ? macroRecall / classesWithSupport : 0;
+  const f1Score = classesWithSupport > 0 ? macroF1 / classesWithSupport : 0;
 
   // Step 7: Compute Log Loss
   let totalLogLoss = 0;
@@ -455,11 +454,10 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
   }
   const logLoss = totalLogLoss / testSamples;
 
-  // Step 8: Compute Convergence Speed (Corrected formula)
+  // Step 8: Compute Convergence Rate (Percentage reduction in loss)
   const convergenceRate =
-    metrics.length > 1
-      ? (metrics[0].loss - metrics[metrics.length - 1].loss) /
-        (metrics.length * Math.max(...metrics.map(m => m.loss)))
+    metrics.length > 1 && metrics[0].loss > 0
+      ? (metrics[0].loss - metrics[metrics.length - 1].loss) / metrics[0].loss
       : 0;
 
   // Step 9: Compute Loss Variance
@@ -488,10 +486,12 @@ self.onmessage = async (e: MessageEvent<WorkerParams>) => {
       testingTime,
       executionTime: trainingTime + testingTime,
       convergenceRate,
-      aulc: metrics.reduce((acc, m, i) => {
-        if (i === 0) return acc;
-        return acc + (metrics[i-1].accuracy + m.accuracy) / 2;
-      }, 0),
+      aulc: metrics.length > 1
+        ? metrics.reduce((acc, m, i) => {
+            if (i === 0) return acc;
+            return acc + (metrics[i-1].accuracy + m.accuracy) / 2;
+          }, 0) / (metrics.length - 1)
+        : (metrics.length === 1 ? metrics[0].accuracy : 0),
       lossVariance
     }
   });
