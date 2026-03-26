@@ -33,7 +33,6 @@ export interface ExperimentResult {
   precision: number;
   recall: number;
   f1Score: number;
-  confusionMatrix: number[][];
   logLoss: number;
   trainingTime: number;
   testingTime: number;
@@ -41,6 +40,7 @@ export interface ExperimentResult {
   convergenceRate: number;
   lossVariance: number;
   aulc: number;
+  compositeScore?: number;
   anovaData?: {
     fValue: number;
     pValue: number;
@@ -296,7 +296,6 @@ export class NeuralNetwork {
       precision,
       recall,
       f1Score,
-      confusionMatrix,
       logLoss
     };
   }

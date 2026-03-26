@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Info, X, Zap, Activity, TrendingDown, Target, Brain, Layers, RefreshCw, BarChart3 } from 'lucide-react';
+import { Info, X, Zap, Activity, TrendingDown, Target, Brain, Layers, RefreshCw, BarChart3, Database } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -231,11 +231,89 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </section>
 
-              {/* SECTION 5: OPTIMIZERS (VERY DETAILED) */}
+              {/* SECTION 5: DATASET HANDLING & PROCESSING PIPELINE */}
+              <section>
+                <div className="flex items-center gap-3 mb-8">
+                  <Database className="w-6 h-6 text-emerald-600" />
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">05. Dataset Handling & Processing Pipeline</h3>
+                </div>
+                <div className="space-y-8 text-[#44403C] leading-relaxed">
+                  <p className="font-medium text-lg">
+                    The Neur-O-Opt Lab framework incorporates a robust and efficient data processing pipeline designed to handle diverse datasets while ensuring high computational performance and memory efficiency.
+                  </p>
+                  
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div className="space-y-4">
+                      <h4 className="font-bold text-[#1C1917] flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">1</span>
+                        Dataset Input Mechanisms
+                      </h4>
+                      <ul className="space-y-2 text-sm">
+                        <li><strong>File Upload:</strong> Supports CSV and TXT files using a streaming-based parsing approach for large files.</li>
+                        <li><strong>Manual Text Entry:</strong> Direct CSV-formatted input for quick experimentation.</li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="font-bold text-[#1C1917] flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">2</span>
+                        Intelligent Parsing
+                      </h4>
+                      <ul className="space-y-2 text-sm">
+                        <li><strong>Header Detection:</strong> Identifies feature names from the first row.</li>
+                        <li><strong>Target Identification:</strong> Treats the first column as the target variable.</li>
+                        <li><strong>Categorical Encoding:</strong> Automatic label encoding for non-numeric features.</li>
+                        <li><strong>Memory Guard:</strong> Dynamic dataset sizing based on system constraints.</li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="font-bold text-[#1C1917] flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">3</span>
+                        Cleaning & Conversion
+                      </h4>
+                      <ul className="space-y-2 text-sm">
+                        <li><strong>Optimized Formats:</strong> Conversion to high-performance typed arrays (Float32/Int32).</li>
+                        <li><strong>Imputation:</strong> Automatic handling of missing or invalid values to prevent instability.</li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="font-bold text-[#1C1917] flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs">4</span>
+                        Adaptive Normalization
+                      </h4>
+                      <ul className="space-y-2 text-sm">
+                        <li><strong>Image Data:</strong> Standard normalization using predefined mean/std (MNIST, CIFAR-10).</li>
+                        <li><strong>Tabular Data:</strong> Z-score standardization for uniform feature scaling.</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#F5F5F4] p-6 rounded-3xl border border-[#E7E5E4] space-y-4">
+                    <h4 className="font-bold text-[#1C1917] flex items-center gap-2 uppercase text-xs tracking-widest">
+                      <Zap className="w-4 h-4 text-emerald-600" />
+                      Advanced Processing
+                    </h4>
+                    <div className="grid md:grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-xs font-bold text-[#78716C] uppercase mb-1">Real-time Augmentation</p>
+                        <p className="text-sm">Enhances image datasets with random horizontal flipping, spatial shifting, and brightness variation during training.</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-[#78716C] uppercase mb-1">Final Preparation</p>
+                        <p className="text-sm">Zero-based index mapping and Fisher-Yates shuffling to eliminate ordering bias and improve stability.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* SECTION 6: OPTIMIZERS (VERY DETAILED) */}
               <section>
                 <div className="flex items-center gap-3 mb-10">
                   <Zap className="w-6 h-6 text-emerald-600" />
-                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">05. Deep Dive into Optimizers</h3>
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">06. Deep Dive into Optimizers</h3>
                 </div>
                 
                 <div className="space-y-20">
@@ -361,11 +439,11 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </section>
 
-              {/* SECTION 6: INTUITIVE ANALOGIES */}
+              {/* SECTION 7: INTUITIVE ANALOGIES */}
               <section>
                 <div className="flex items-center gap-3 mb-8">
                   <Brain className="w-6 h-6 text-emerald-600" />
-                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">06. Intuitive Analogies</h3>
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">07. Intuitive Analogies</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   {[
@@ -382,11 +460,11 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </section>
 
-              {/* SECTION 7: COMPARISON SUMMARY */}
+              {/* SECTION 8: COMPARISON SUMMARY */}
               <section>
                 <div className="flex items-center gap-3 mb-8">
                   <BarChart3 className="w-6 h-6 text-emerald-600" />
-                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">07. Comparison Summary</h3>
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">08. Comparison Summary</h3>
                 </div>
                 <div className="overflow-hidden rounded-3xl border border-[#E7E5E4]">
                   <table className="w-full text-left border-collapse">
@@ -417,11 +495,11 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </section>
 
-              {/* SECTION 8: PRACTICAL INSIGHTS */}
+              {/* SECTION 9: PRACTICAL INSIGHTS */}
               <section>
                 <div className="flex items-center gap-3 mb-8">
                   <Target className="w-6 h-6 text-emerald-600" />
-                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">08. Practical Insights</h3>
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">09. Practical Insights</h3>
                 </div>
                 <div className="space-y-6">
                   <div className="p-6 bg-white border border-[#E7E5E4] rounded-3xl shadow-sm">
@@ -435,11 +513,11 @@ const InfoModal: React.FC<InfoModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </section>
 
-              {/* SECTION 9: CONNECTION TO YOUR APP */}
+              {/* SECTION 10: CONNECTION TO YOUR APP */}
               <section>
                 <div className="flex items-center gap-3 mb-8">
                   <TrendingDown className="w-6 h-6 text-emerald-600" />
-                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">09. Connection to Your App</h3>
+                  <h3 className="text-xl font-bold text-[#1C1917] uppercase tracking-wider">10. Connection to Your App</h3>
                 </div>
                 <div className="space-y-6 text-[#44403C] leading-relaxed">
                   <p>In <strong>Neur-O-Opt Lab</strong>, you can observe these theories in real-time through the following visualizations:</p>

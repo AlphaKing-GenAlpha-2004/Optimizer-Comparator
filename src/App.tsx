@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github, Type
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github, Type, Trash2, RefreshCw, Check
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import InfoModal from './components/InfoModal';
@@ -63,6 +63,8 @@ export default function App() {
   });
   const [elapsedTime, setElapsedTime] = useState(0);
   const [history, setHistory] = useState<any[]>([]);
+  const [datasets, setDatasets] = useState<any[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [currentOptimizer, setCurrentOptimizer] = useState<OptimizerType | null>(null);
   const [currentEpoch, setCurrentEpoch] = useState(0);
 
@@ -87,8 +89,21 @@ export default function App() {
     }
   };
 
+  const fetchDatasets = async () => {
+    try {
+      const res = await fetch('/api/datasets');
+      if (res.ok) {
+        const data = await res.json();
+        setDatasets(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch datasets', e);
+    }
+  };
+
   useEffect(() => {
     fetchHistory();
+    fetchDatasets();
   }, []);
 
   useEffect(() => {
@@ -150,6 +165,26 @@ export default function App() {
     return 512;
   };
 
+  const getDynamicEpochLimit = (samples: number) => {
+    if (!samples) return 5000;
+    // Aim for ~5M total samples processed as a reasonable browser limit
+    // but keep a minimum of 100 epochs and maximum of 10000
+    return Math.min(10000, Math.max(100, Math.floor(5000000 / samples)));
+  };
+
+  const getDynamicHiddenSizeLimit = (inputSize: number) => {
+    if (!inputSize) return 512;
+    // Allow hidden size up to 2x input size, but at least 512 and at most 2048
+    return Math.min(2048, Math.max(512, inputSize * 2));
+  };
+
+  const getDynamicSampleSizeLimit = (inputSize: number) => {
+    if (!inputSize) return 1000000;
+    // 250M elements total limit for Float32Array (~1GB)
+    // Capped at 5M for UI responsiveness and stability
+    return Math.min(5000000, Math.floor(250000000 / inputSize));
+  };
+
   // Re-process files when sample size sliders are adjusted
   useEffect(() => {
     if (trainFile) {
@@ -182,6 +217,42 @@ export default function App() {
     setIsTextEntryOpen(false);
   };
 
+  const saveDatasetMetadata = async (file: File, type: string, rowCount: number, featCols: string[], targetCol: string) => {
+    try {
+      await fetch('/api/datasets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: file.name,
+          type: type,
+          rowCount: rowCount,
+          columnCount: featCols.length,
+          features: featCols,
+          target: targetCol,
+          content: ''
+        })
+      });
+      fetchDatasets();
+    } catch (err) {
+      console.error("Failed to save dataset metadata:", err);
+    }
+  };
+
+  const deleteDataset = async (id: number) => {
+    try {
+      await fetch(`/api/datasets/${id}`, { method: 'DELETE' });
+      fetchDatasets();
+    } catch (err) {
+      console.error("Failed to delete dataset:", err);
+    }
+  };
+
+  const loadDatasetMetadata = (ds: any) => {
+    setFeatures(JSON.parse(ds.features));
+    setTarget(ds.target);
+    setStatusMessage(`Loaded metadata for ${ds.name}. Please upload the file to start training.`);
+  };
+
   const processFile = async (file: File, type: 'train' | 'test') => {
     setIsProcessing(true);
     setError(null);
@@ -194,8 +265,15 @@ export default function App() {
     let featCols: string[] = [];
     let targetCol = "";
     
-    // Reset classes if it's a new training file to prevent pollution
-    // If it's a test file, we MUST use the classes from the training file
+    // For adaptive normalization
+    let colSums: Float64Array | null = null;
+    let colSqSums: Float64Array | null = null;
+    let colCounts: Int32Array | null = null;
+    
+    // For categorical features
+    const catMappings: Record<string, Map<string, number>> = {};
+    const catCounters: Record<string, number> = {};
+
     let currentClasses: Set<string> = type === 'train' ? new Set<string>() : new Set<string>(classes);
     
     let X: Float32Array | null = null;
@@ -208,19 +286,13 @@ export default function App() {
       dynamicTyping: true,
       skipEmptyLines: true,
       worker: true,
-      chunkSize: 1024 * 1024 * 10, // 10MB chunks for better performance with large files
+      chunkSize: 1024 * 1024 * 10,
       step: (results, parser) => {
         const row = results.data;
         if (rowCount === 0) {
           const cols = Object.keys(row || {});
           
           if (type === 'test') {
-            if (features.length === 0) {
-              setError("Please upload a training dataset first to define features and classes.");
-              parser.abort();
-              setIsProcessing(false);
-              return;
-            }
             featCols = features;
             targetCol = target || cols[0];
           } else {
@@ -230,28 +302,38 @@ export default function App() {
               setIsProcessing(false);
               return;
             }
-            targetCol = cols[0];        // first column is label
-            featCols = cols.slice(1);   // remaining columns are features
+            targetCol = cols[0];
+            featCols = cols.slice(1);
           }
           
           const inputSize = featCols.length;
-          
-          // Memory Guard: Check if we can allocate the required TypedArrays
+          colSums = new Float64Array(inputSize);
+          colSqSums = new Float64Array(inputSize);
+          colCounts = new Int32Array(inputSize);
+
           const totalElements = maxSamples * inputSize;
-          if (totalElements > 250000000) { // ~1GB limit for safety in browser
-            setError(`Dataset too large for browser memory. Reducing samples to ${Math.floor(250000000 / inputSize).toLocaleString()}.`);
-            // We'll continue with a smaller maxSamples
+          const safeMax = Math.floor(250000000 / inputSize);
+          const effectiveMax = Math.min(maxSamples, safeMax);
+
+          try {
+            X = new Float32Array(effectiveMax * inputSize);
+            y = new Int32Array(effectiveMax);
+          } catch (e) {
+            setError("Memory allocation failed. Try reducing sample size.");
+            parser.abort();
+            setIsProcessing(false);
+            return;
           }
 
           let newHiddenSize;
-          if (inputSize <= 1000) {
-            newHiddenSize = 64; // MNIST-like
+          if (inputSize <= 100) {
+            newHiddenSize = 32;
+          } else if (inputSize <= 1000) {
+            newHiddenSize = 128;
           } else if (inputSize <= 3000) {
-            newHiddenSize = 256; // CIFAR-10-like
-          } else if (inputSize <= 4000) {
-            newHiddenSize = 512; // CIFAR-100-like
+            newHiddenSize = 512;
           } else {
-            newHiddenSize = 1024; // High-res
+            newHiddenSize = 1024;
           }
           
           if (type === 'train') {
@@ -259,22 +341,11 @@ export default function App() {
             setTarget(targetCol);
             setParams(prev => ({ ...prev, hiddenSize: newHiddenSize }));
           }
-
-          try {
-            X = new Float32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)) * inputSize);
-            y = new Int32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)));
-          } catch (e) {
-            setError("Memory allocation failed. Try reducing sample size.");
-            parser.abort();
-            setIsProcessing(false);
-            return;
-          }
         }
 
         const effectiveMax = X ? X.length / featCols.length : 0;
 
         if (rowCount < effectiveMax) {
-          // Store first 10 rows for preview
           if (rowCount < 10) {
             const previewRow: any = {};
             const previewCols = featCols.slice(0, 20);
@@ -283,14 +354,36 @@ export default function App() {
             tempRows.push(previewRow);
           }
 
-          // Process for TypedArrays
+          const featCount = featCols.length;
+          const isImageSize = [784, 1024, 2352, 3072].includes(featCount);
+
           featCols.forEach((f, j) => {
-            let val = parseFloat(row[f]);
-            if (!Number.isFinite(val)) val = 0;
-            // Auto-normalization check: if values are > 1, assume 0-255 range
-            // This is a heuristic, but common for image datasets
-            if (val > 1) val /= 255;
-            if (X) X[rowCount * featCols.length + j] = val;
+            let val = row[f];
+            let numericVal = 0;
+
+            if (typeof val === 'string') {
+              // Handle categorical
+              if (!catMappings[f]) {
+                catMappings[f] = new Map<string, number>();
+                catCounters[f] = 0;
+              }
+              if (!catMappings[f].has(val)) {
+                catMappings[f].set(val, catCounters[f]++);
+              }
+              numericVal = catMappings[f].get(val)!;
+            } else {
+              numericVal = parseFloat(val);
+              if (!Number.isFinite(numericVal)) numericVal = 0;
+            }
+            
+            if (X) X[rowCount * featCount + j] = numericVal;
+            
+            // Track stats for normalization (only if not a known image size which has its own logic)
+            if (!isImageSize && colSums && colSqSums && colCounts) {
+              colSums[j] += numericVal;
+              colSqSums[j] += numericVal * numericVal;
+              colCounts[j]++;
+            }
           });
 
           const targetVal = String(row[targetCol]);
@@ -304,7 +397,7 @@ export default function App() {
         if (rowCount % 5000 === 0) {
           const progress = Math.min(99, (rowCount / maxSamples) * 100);
           setParseProgress(progress);
-          setStatusMessage(`Streaming ${file.name}... ${rowCount.toLocaleString()} rows (${(rowCount * featCols.length * 4 / (1024*1024)).toFixed(1)} MB in memory)`);
+          setStatusMessage(`Streaming ${file.name}... ${rowCount.toLocaleString()} rows`);
         }
         
         if (rowCount >= effectiveMax) {
@@ -313,14 +406,58 @@ export default function App() {
       },
       complete: () => {
         setParseProgress(100);
-        if (rowCount === 0) {
-          setError("The dataset is empty.");
+        if (rowCount === 0 || !X || !y) {
+          setError("The dataset is empty or processing failed.");
           setIsProcessing(false);
           return;
         }
 
+        const finalRowCount = Math.min(rowCount, X.length / featCols.length);
+        const featCount = featCols.length;
+
+        // Final Normalization Pass
+        const isCifar = featCount === 3072;
+        const isMnist = featCount === 784;
+        
+        if (isCifar || isMnist) {
+          const mean = isCifar ? [0.4914, 0.4822, 0.4465] : [0.1307];
+          const std = isCifar ? [0.2470, 0.2435, 0.2616] : [0.3081];
+          const channels = isCifar ? 3 : 1;
+          const planeSize = featCount / channels;
+
+          for (let i = 0; i < finalRowCount; i++) {
+            for (let j = 0; j < featCount; j++) {
+              let val = X[i * featCount + j] / 255.0;
+              const c = Math.floor(j / planeSize);
+              X[i * featCount + j] = (val - mean[c]) / std[c];
+            }
+          }
+        } else if (colSums && colSqSums && colCounts) {
+          // Adaptive Z-score normalization for tabular data
+          const means = new Float32Array(featCount);
+          const stds = new Float32Array(featCount);
+          
+          for (let j = 0; j < featCount; j++) {
+            const count = colCounts[j];
+            if (count > 0) {
+              means[j] = colSums[j] / count;
+              const variance = (colSqSums[j] / count) - (means[j] * means[j]);
+              stds[j] = Math.sqrt(Math.max(1e-8, variance));
+            }
+          }
+
+          for (let i = 0; i < finalRowCount; i++) {
+            for (let j = 0; j < featCount; j++) {
+              X[i * featCount + j] = (X[i * featCount + j] - means[j]) / stds[j];
+            }
+          }
+        }
+
         let finalClasses: string[] = [];
         if (type === 'train') {
+          if (currentClasses.size > 100) {
+            setStatusMessage(`Warning: Detected ${currentClasses.size} unique classes. This might be a regression dataset or have high cardinality. Performance may be slow.`);
+          }
           finalClasses = Array.from(currentClasses).sort();
           setClasses(finalClasses);
         } else {
@@ -382,6 +519,7 @@ export default function App() {
 
         setIsProcessing(false);
         setStatusMessage(`${file.name} processed (${rowCount} rows).`);
+        saveDatasetMetadata(file, type, rowCount, featCols, targetCol);
       }
     });
   };
@@ -392,27 +530,34 @@ export default function App() {
       return;
     }
 
-    if (params.hiddenSize < 1 || params.hiddenSize > 512) {
-      setError("Hidden layer size must be between 1 and 512.");
-      return;
-    }
+    setIsTraining(true);
+    setError(null);
 
     if (params.learningRate <= 0 || params.learningRate > 1 || params.adamLearningRate <= 0 || params.adamLearningRate > 1) {
       setError("Learning rates must be between 0 and 1.");
+      setIsTraining(false);
       return;
     }
-
-    if (params.epochs < 1 || params.epochs > 5000) {
-      setError("Number of epochs must be between 1 and 5000.");
-      return;
-    }
-    
-    setIsTraining(true);
-    setError(null);
 
     // Dimension Check (Step 12)
     const trainInputSize = trainTensors.X.length / trainTensors.y.length;
     const testInputSize = testTensors.X.length / testTensors.y.length;
+    const numSamples = trainTensors.y.length;
+    
+    const epochLimit = getDynamicEpochLimit(numSamples);
+    const hiddenLimit = getDynamicHiddenSizeLimit(trainInputSize);
+
+    if (params.hiddenSize < 1 || params.hiddenSize > hiddenLimit) {
+      setError(`Hidden layer size must be between 1 and ${hiddenLimit} for this dataset.`);
+      setIsTraining(false);
+      return;
+    }
+
+    if (params.epochs < 1 || params.epochs > epochLimit) {
+      setError(`Number of epochs must be between 1 and ${epochLimit} for this dataset size.`);
+      setIsTraining(false);
+      return;
+    }
     
     if (trainInputSize !== features.length || testInputSize !== features.length) {
       setError(`Dimension mismatch: Train features (${trainInputSize}) vs Test features (${testInputSize}) vs Expected (${features.length}). Please re-upload datasets.`);
@@ -561,7 +706,6 @@ export default function App() {
             precision: res.precision,
             recall: res.recall,
             f1_score: res.f1Score,
-            confusion_matrix: JSON.stringify(res.confusionMatrix),
             log_loss: res.logLoss,
             convergence_rate: res.convergenceRate,
             training_time: res.trainingTime,
@@ -588,21 +732,81 @@ export default function App() {
   const bestOptimizer = useMemo(() => {
     if (results.length === 0) return null;
 
-    const sorted = [...results].sort((a, b) => {
-      if (b.testAccuracy !== a.testAccuracy)
-        return b.testAccuracy - a.testAccuracy;
+    // Normalization helper to bring all metrics to [0, 1] range
+    const normalize = (val: number, min: number, max: number, invert = false) => {
+      if (max === min) return 1.0; // If all values are the same, they all get full score for this metric
+      const norm = (val - min) / (max - min);
+      return invert ? 1.0 - norm : norm;
+    };
 
-      if (a.logLoss !== b.logLoss)
-        return a.logLoss - b.logLoss;
+    // Extract all metrics for boundary calculation
+    const metrics = {
+      testAccuracy: results.map(r => r.testAccuracy),
+      f1Score: results.map(r => r.f1Score),
+      logLoss: results.map(r => r.logLoss),
+      convergenceRate: results.map(r => r.convergenceRate),
+      trainingTime: results.map(r => r.trainingTime),
+      lossVariance: results.map(r => r.lossVariance),
+      aulc: results.map(r => r.aulc),
+    };
 
-      if (b.convergenceRate !== a.convergenceRate)
-        return b.convergenceRate - a.convergenceRate;
+    const bounds = {
+      testAccuracy: { min: Math.min(...metrics.testAccuracy), max: Math.max(...metrics.testAccuracy) },
+      f1Score: { min: Math.min(...metrics.f1Score), max: Math.max(...metrics.f1Score) },
+      logLoss: { min: Math.min(...metrics.logLoss), max: Math.max(...metrics.logLoss) },
+      convergenceRate: { min: Math.min(...metrics.convergenceRate), max: Math.max(...metrics.convergenceRate) },
+      trainingTime: { min: Math.min(...metrics.trainingTime), max: Math.max(...metrics.trainingTime) },
+      lossVariance: { min: Math.min(...metrics.lossVariance), max: Math.max(...metrics.lossVariance) },
+      aulc: { min: Math.min(...metrics.aulc), max: Math.max(...metrics.aulc) },
+    };
 
-      return a.trainingTime - b.trainingTime;
+    // Calculate composite score for each result
+    // Weights are distributed based on importance:
+    // Accuracy (30%), F1 (15%), LogLoss (15%), Convergence (10%), Time (10%), Stability/Var (10%), AULC (10%)
+    const scored = results.map(res => {
+      const sAccuracy = normalize(res.testAccuracy, bounds.testAccuracy.min, bounds.testAccuracy.max) * 0.30;
+      const sF1 = normalize(res.f1Score, bounds.f1Score.min, bounds.f1Score.max) * 0.15;
+      const sLogLoss = normalize(res.logLoss, bounds.logLoss.min, bounds.logLoss.max, true) * 0.15;
+      const sConv = normalize(res.convergenceRate, bounds.convergenceRate.min, bounds.convergenceRate.max) * 0.10;
+      const sTime = normalize(res.trainingTime, bounds.trainingTime.min, bounds.trainingTime.max, true) * 0.10;
+      const sVar = normalize(res.lossVariance, bounds.lossVariance.min, bounds.lossVariance.max, true) * 0.10;
+      const sAulc = normalize(res.aulc, bounds.aulc.min, bounds.aulc.max) * 0.10; // Higher AULC (accuracy) is better
+
+      return {
+        ...res,
+        compositeScore: sAccuracy + sF1 + sLogLoss + sConv + sTime + sVar + sAulc
+      };
     });
 
-    return sorted[0];
+    // Sort by composite score descending
+    return scored.sort((a, b) => b.compositeScore - a.compositeScore)[0];
   }, [results]);
+
+  const deleteExperiment = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    // If we're not already confirming this one, set it to confirm
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      // Auto-reset after 3 seconds if not clicked again
+      setTimeout(() => setConfirmDeleteId(null), 3000);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/experiments/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setHistory(prev => prev.filter(exp => exp.id !== id));
+        setConfirmDeleteId(null);
+        if (selectedExperiment?.id === id) {
+          setIsViewingReport(false);
+          setSelectedExperiment(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete experiment', err);
+    }
+  };
 
   const fetchExperimentDetails = async (id: number) => {
     try {
@@ -1024,7 +1228,7 @@ export default function App() {
                   <input 
                     type="number"
                     min="50"
-                    max="1000000"
+                    max={getDynamicSampleSizeLimit(features.length)}
                     value={trainSampleSize}
                     onChange={(e) => setTrainSampleSize(Math.max(50, parseInt(e.target.value) || 0))}
                     className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
@@ -1033,13 +1237,13 @@ export default function App() {
                 </div>
               </div>
               <input 
-                type="range" min="50" max="1000000" step="50" value={trainSampleSize}
+                type="range" min="50" max={getDynamicSampleSizeLimit(features.length)} step="50" value={trainSampleSize}
                 onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
                 <span>50</span>
-                <span>1M</span>
+                <span>{getDynamicSampleSizeLimit(features.length) >= 1000000 ? `${(getDynamicSampleSizeLimit(features.length)/1000000).toFixed(1)}M` : (getDynamicSampleSizeLimit(features.length)/1000).toFixed(0) + 'k'}</span>
               </div>
             </div>
             <div className="space-y-2">
@@ -1049,7 +1253,7 @@ export default function App() {
                   <input 
                     type="number"
                     min="20"
-                    max="500000"
+                    max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)}
                     value={testSampleSize}
                     onChange={(e) => setTestSampleSize(Math.max(20, parseInt(e.target.value) || 0))}
                     className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
@@ -1058,13 +1262,13 @@ export default function App() {
                 </div>
               </div>
               <input 
-                type="range" min="20" max="500000" step="10" value={testSampleSize}
+                type="range" min="20" max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)} step="10" value={testSampleSize}
                 onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
                 className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
               />
               <div className="flex justify-between text-[10px] text-[#A8A29E]">
                 <span>20</span>
-                <span>500k</span>
+                <span>{Math.floor(getDynamicSampleSizeLimit(features.length) / 2) >= 1000000 ? `${(Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000000).toFixed(1)}M` : (Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000).toFixed(0) + 'k'}</span>
               </div>
             </div>
             {(trainFile?.size || 0) > 500 * 1024 * 1024 && (
@@ -1091,7 +1295,7 @@ export default function App() {
             <div className="space-y-1">
               <label className="text-[11px] font-medium">Hidden Size</label>
               <input 
-                type="number" value={params.hiddenSize || ''} 
+                type="number" min="1" max={getDynamicHiddenSizeLimit(features.length)} value={params.hiddenSize || ''} 
                 onChange={e => {
                   const val = parseInt(e.target.value);
                   setParams({...params, hiddenSize: isNaN(val) ? 0 : val});
@@ -1124,7 +1328,7 @@ export default function App() {
             <div className="space-y-1">
               <label className="text-[11px] font-medium">Epochs</label>
               <input 
-                type="number" min="1" max="5000" value={params.epochs || ''} 
+                type="number" min="1" max={getDynamicEpochLimit(trainTensors?.y.length || 0)} value={params.epochs || ''} 
                 onChange={e => {
                   const val = parseInt(e.target.value);
                   setParams({...params, epochs: isNaN(val) ? 0 : val});
@@ -1143,6 +1347,87 @@ export default function App() {
                 className="w-full bg-[#F5F5F4] border-none rounded-md px-3 py-2 text-sm focus:ring-1 ring-[#1C1917]"
               />
             </div>
+          </div>
+        </section>
+        
+        {/* System Info */}
+        <section className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl space-y-2">
+          <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
+            <Zap className="w-3 h-3" />
+            Training Environment
+          </div>
+          <p className="text-[11px] text-emerald-800 leading-relaxed">
+            Training is performed <b>locally on your CPU</b> using multi-threaded <b>Web Workers</b>. 
+            Your data never leaves your browser, and the app works <b>offline</b> once loaded.
+          </p>
+          <div className="flex items-center gap-3 pt-1">
+            <div className="flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[9px] font-medium text-emerald-700">Local Processing</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+              <span className="text-[9px] font-medium text-emerald-700">Privacy Guaranteed</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Datasets Section */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between text-xs font-semibold text-[#78716C] uppercase tracking-wider">
+            <div className="flex items-center gap-2">
+              <Database className="w-3 h-3" />
+              Saved Datasets
+            </div>
+            <button 
+              onClick={fetchDatasets}
+              className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors"
+              title="Refresh Datasets"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+            {datasets.length === 0 ? (
+              <div className="text-[10px] text-[#A8A29E] italic text-center py-4 border border-dashed border-[#E7E5E4] rounded-xl">
+                No datasets saved yet.
+              </div>
+            ) : (
+              datasets.map((ds) => (
+                <div key={ds.id} className="p-3 bg-white border border-[#E7E5E4] rounded-xl hover:border-[#1C1917] transition-all group">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold truncate max-w-[120px]" title={ds.name}>{ds.name}</span>
+                    <span className={cn(
+                      "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase",
+                      ds.type === 'train' ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
+                    )}>
+                      {ds.type}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[9px] text-[#78716C]">
+                    <span>{ds.rowCount.toLocaleString()} rows • {ds.columnCount} cols</span>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => loadDatasetMetadata(ds)}
+                        className="text-blue-500 hover:text-blue-700 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1"
+                        title="Load Metadata"
+                      >
+                        <Download className="w-3 h-3" /> Load
+                      </button>
+                      <span className="text-[8px] opacity-0 group-hover:opacity-100 transition-opacity">
+                        {new Date(ds.timestamp).toLocaleDateString()}
+                      </span>
+                      <button 
+                        onClick={() => deleteDataset(ds.id)}
+                        className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </section>
 
@@ -1643,6 +1928,53 @@ export default function App() {
           </section>
         )}
 
+        {/* Metric Definitions Info Box */}
+        {results.length > 0 && (
+          <section className="bg-blue-50 border border-blue-100 p-6 rounded-2xl">
+            <h3 className="font-bold text-blue-900 mb-4 flex items-center gap-2">
+              <Info className="w-4 h-4" /> Understanding the Metrics
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Accuracy</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  The percentage of total correct predictions. Calculated as <b>(TP + TN) / Total Samples</b>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Precision (Macro)</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  The average accuracy of positive predictions across all classes. <b>TP / (TP + FP)</b>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Recall (Macro)</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  The ability to find all positive instances across all classes. <b>TP / (TP + FN)</b>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">F1 Score (Macro)</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  The harmonic mean of Precision and Recall. Best for datasets with <b>class imbalance</b>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Log Loss</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Measures the performance of a classification model where the prediction input is a <b>probability value</b>.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">AULC</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  <b>Area Under Learning Curve</b>. Measures how quickly and consistently the model learns over time.
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Analysis Section */}
         {bestOptimizer && (
           <div className="space-y-8">
@@ -1652,7 +1984,7 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">Best Optimizer</h3>
                   <div className="text-3xl font-black mb-4">{bestOptimizer.optimizer}</div>
                   <p className="text-sm leading-relaxed opacity-90">
-                    The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span> because it achieved a test accuracy of <span className="font-bold">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</span> with a convergence rate of <span className="font-bold">{safeFixed(bestOptimizer.convergenceRate, 4)}</span>.
+                    The best optimizer for this dataset is <span className="font-bold">{bestOptimizer.optimizer}</span>, selected for its superior balanced performance across accuracy, stability, and speed.
                   </p>
                 </div>
                 <div className="mt-6 pt-6 border-t border-white/20">
@@ -1692,123 +2024,23 @@ export default function App() {
               </section>
             </div>
 
-            {/* Best Performer Heatmap */}
-            <section className="bg-white rounded-2xl p-8 border border-[#E7E5E4] shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="font-bold text-lg flex items-center gap-2">
-                    <Grid3X3 className="w-5 h-5 text-emerald-600" /> 
-                    Best Performer Confusion Matrix: {bestOptimizer.optimizer}
-                  </h3>
-                  <p className="text-xs text-[#78716C] mt-1">Heatmap visualization of classification performance across all categories.</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-emerald-600 rounded-sm"></div>
-                    <span className="text-[10px] font-bold text-[#78716C] uppercase tracking-wider">Correct</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-[#1C1917]/20 rounded-sm"></div>
-                    <span className="text-[10px] font-bold text-[#78716C] uppercase tracking-wider">Error Intensity</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto pb-4">
-                <div className="min-w-[800px] flex flex-col items-center">
-                  {classes.length > 25 ? (
-                    <div className="w-full p-12 text-center bg-[#F5F5F4] rounded-2xl border border-dashed border-[#E7E5E4]">
-                      <AlertCircle className="w-10 h-10 mx-auto mb-4 text-[#78716C]" />
-                      <p className="text-lg font-black text-[#1C1917]">High-Dimensionality Matrix</p>
-                      <p className="text-sm text-[#78716C] mt-2 max-w-md mx-auto">This dataset has {classes.length} classes. Rendering a full heatmap is disabled to maintain performance.</p>
-                      <div className="mt-8 grid grid-cols-2 gap-6 max-w-lg mx-auto">
-                        <div className="p-6 bg-white rounded-2xl border border-[#E7E5E4] shadow-sm">
-                          <div className="text-[10px] text-[#78716C] uppercase font-bold mb-2 tracking-widest">Total Predictions</div>
-                          <div className="text-3xl font-black">{bestOptimizer.confusionMatrix.flat().reduce((a, b) => a + b, 0)}</div>
-                        </div>
-                        <div className="p-6 bg-white rounded-2xl border border-[#E7E5E4] shadow-sm">
-                          <div className="text-[10px] text-[#78716C] uppercase font-bold mb-2 tracking-widest">Correct Hits</div>
-                          <div className="text-3xl font-black text-emerald-600">{bestOptimizer.confusionMatrix.reduce((acc, row, i) => acc + row[i], 0)}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="relative inline-block">
-                      {/* X-Axis Label (Top) */}
-                      <div className="flex justify-center mb-4">
-                        <span className="text-[10px] font-black text-[#78716C] uppercase tracking-[0.2em] bg-[#F5F5F4] px-4 py-1 rounded-full">Predicted Class</span>
-                      </div>
-                      
-                      <div className="flex">
-                        {/* Y-Axis Label (Left) */}
-                        <div className="flex items-center mr-4">
-                          <span className="text-[10px] font-black text-[#78716C] uppercase tracking-[0.2em] bg-[#F5F5F4] px-4 py-1 rounded-full [writing-mode:vertical-lr] rotate-180">Actual Class</span>
-                        </div>
-
-                        <div className="flex flex-col">
-                          {/* Column Headers */}
-                          <div className="grid ml-[100px] mb-2" style={{ gridTemplateColumns: `repeat(${classes.length}, 40px)` }}>
-                            {classes.map((c, i) => (
-                              <div key={i} className="text-[9px] font-bold text-[#78716C] text-center truncate px-1 -rotate-45 origin-bottom-left h-8" title={c}>
-                                {c}
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="flex">
-                            {/* Row Headers */}
-                            <div className="flex flex-col justify-around mr-2 w-[100px]">
-                              {classes.map((c, i) => (
-                                <div key={i} className="text-[9px] font-bold text-[#78716C] text-right truncate pr-2 h-10 flex items-center justify-end" title={c}>
-                                  {c}
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Heatmap Grid */}
-                            <div className="grid gap-1 bg-[#F5F5F4] p-1 rounded-lg shadow-inner" style={{ gridTemplateColumns: `repeat(${classes.length}, 40px)` }}>
-                              {bestOptimizer.confusionMatrix.map((row, i) => (
-                                row.map((val, j) => {
-                                  const maxInRow = Math.max(...row);
-                                  const intensity = maxInRow > 0 ? val / maxInRow : 0;
-                                  const isCorrect = i === j;
-                                  
-                                  return (
-                                    <div 
-                                      key={`${i}-${j}`}
-                                      className={cn(
-                                        "w-10 h-10 flex items-center justify-center text-[10px] font-black rounded-md transition-all duration-300 hover:scale-110 hover:z-10 cursor-default",
-                                        isCorrect ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20" : "text-[#1C1917]"
-                                      )}
-                                      style={{ 
-                                        backgroundColor: isCorrect ? undefined : `rgba(28, 25, 23, ${intensity * 0.3})`,
-                                        opacity: val === 0 ? 0.2 : 1,
-                                        border: isCorrect ? '2px solid rgba(255,255,255,0.2)' : 'none'
-                                      }}
-                                      title={`Actual: ${classes[i]}, Predicted: ${classes[j]}, Count: ${val}`}
-                                    >
-                                      {val > 0 ? val : ''}
-                                    </div>
-                                  );
-                                })
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
           </div>
         )}
 
         {/* History Dashboard */}
         <section className="bg-white rounded-2xl p-6 border border-[#E7E5E4] shadow-sm">
-          <h2 className="font-bold text-lg mb-6 flex items-center gap-2">
-            <History className="w-5 h-5" /> Experiment History
-          </h2>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="font-bold text-lg flex items-center gap-2">
+              <History className="w-5 h-5" /> Experiment History
+            </h2>
+            <button 
+              onClick={() => fetchHistory()}
+              className="p-2 hover:bg-[#F5F5F4] rounded-lg transition-colors text-[#78716C]"
+              title="Refresh History"
+            >
+              <Activity className="w-4 h-4" />
+            </button>
+          </div>
           <div className="space-y-3">
             {history.length === 0 ? (
               <div className="text-center py-12 text-[#A8A29E] italic text-sm">No experiments recorded yet.</div>
@@ -1841,7 +2073,19 @@ export default function App() {
                       </div>
                       <div className="text-sm font-bold">{safeFixed(exp.execution_time, 1, 1, 's')}</div>
                     </div>
-                    <div className="pl-4 border-l border-[#E7E5E4] flex items-center">
+                    <div className="pl-4 border-l border-[#E7E5E4] flex items-center gap-2">
+                      <button 
+                        onClick={(e) => deleteExperiment(exp.id, e)}
+                        className={cn(
+                          "p-2 rounded-full transition-all",
+                          confirmDeleteId === exp.id 
+                            ? "bg-red-600 text-white opacity-100" 
+                            : "bg-white text-red-600 opacity-0 group-hover:opacity-100 hover:bg-red-50"
+                        )}
+                        title={confirmDeleteId === exp.id ? "Click again to confirm" : "Delete Experiment"}
+                      >
+                        {confirmDeleteId === exp.id ? <Check className="w-4 h-4" /> : <Trash2 className="w-4 h-4" />}
+                      </button>
                       <div className="p-2 rounded-full bg-white text-[#1C1917] opacity-0 group-hover:opacity-100 transition-opacity">
                         <ChevronRight className="w-4 h-4" />
                       </div>
@@ -2101,76 +2345,6 @@ export default function App() {
                           <Line yAxisId="right" type="monotone" dataKey="throughput" stroke="#F59E0B" strokeWidth={2} dot={false} name="Throughput" />
                         </LineChart>
                       </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-8">
-                  <div className="bg-white border border-[#E7E5E4] p-6 rounded-2xl overflow-x-auto">
-                    <h4 className="font-bold mb-6 text-sm flex items-center gap-2">
-                      <Grid3X3 className="w-4 h-4" /> 
-                      Confusion Matrix
-                    </h4>
-                    <div className="min-w-[600px]">
-                      {classes.length > 25 ? (
-                        <div className="p-8 text-center bg-[#F5F5F4] rounded-2xl border border-dashed border-[#E7E5E4]">
-                          <AlertCircle className="w-8 h-8 mx-auto mb-4 text-[#78716C]" />
-                          <p className="text-sm font-bold text-[#1C1917]">High-Dimensionality Matrix</p>
-                          <p className="text-xs text-[#78716C] mt-1">This dataset has {classes.length} classes. Rendering a full {classes.length}x{classes.length} matrix is disabled to maintain performance.</p>
-                          <div className="mt-6 grid grid-cols-2 gap-4 max-w-md mx-auto">
-                            <div className="p-4 bg-white rounded-xl border border-[#E7E5E4]">
-                              <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Total Predictions</div>
-                              <div className="text-lg font-black">{selectedExperiment.confusion_matrix.flat().reduce((a: number, b: number) => a + b, 0)}</div>
-                            </div>
-                            <div className="p-4 bg-white rounded-xl border border-[#E7E5E4]">
-                              <div className="text-[10px] text-[#78716C] uppercase font-bold mb-1">Correct Hits</div>
-                              <div className="text-lg font-black text-emerald-600">{selectedExperiment.confusion_matrix.reduce((acc: number, row: number[], i: number) => acc + row[i], 0)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-[100px_1fr] gap-4">
-                          <div className="flex items-center justify-center [writing-mode:vertical-lr] rotate-180 text-[10px] font-bold text-[#78716C] uppercase tracking-widest">
-                            Actual Class
-                          </div>
-                          <div className="space-y-4">
-                            <div className="grid" style={{ gridTemplateColumns: `repeat(${classes.length}, 1fr)` }}>
-                              {classes.map((c, i) => (
-                                <div key={i} className="text-[8px] font-bold text-[#78716C] text-center truncate px-1" title={c}>
-                                  {c}
-                                </div>
-                              ))}
-                            </div>
-                            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${classes.length}, 1fr)` }}>
-                              {selectedExperiment.confusion_matrix.map((row: number[], i: number) => (
-                                row.map((val: number, j: number) => {
-                                  const maxInRow = Math.max(...row);
-                                  const intensity = maxInRow > 0 ? val / maxInRow : 0;
-                                  return (
-                                    <div 
-                                      key={`${i}-${j}`}
-                                      className={cn(
-                                        "aspect-square flex items-center justify-center text-[8px] font-medium rounded-sm transition-all",
-                                        i === j ? "bg-emerald-600 text-white" : "bg-[#F5F5F4] text-[#1C1917]"
-                                      )}
-                                      style={{ 
-                                        backgroundColor: i === j ? undefined : `rgba(28, 25, 23, ${intensity * 0.2})`,
-                                        opacity: val === 0 ? 0.3 : 1
-                                      }}
-                                      title={`Actual: ${classes[i]}, Predicted: ${classes[j]}, Count: ${val}`}
-                                    >
-                                      {val > 0 ? val : ''}
-                                    </div>
-                                  );
-                                })
-                              ))}
-                            </div>
-                            <div className="text-center text-[10px] font-bold text-[#78716C] uppercase tracking-widest mt-2">
-                              Predicted Class
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>

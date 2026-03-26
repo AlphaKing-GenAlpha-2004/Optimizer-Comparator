@@ -24,7 +24,6 @@ db.exec(`
     precision REAL,
     recall REAL,
     f1_score REAL,
-    confusion_matrix TEXT,
     log_loss REAL,
     convergence_rate REAL,
     training_time REAL,
@@ -34,7 +33,19 @@ db.exec(`
     loss_variance REAL,
     logs TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
+  );
+
+  CREATE TABLE IF NOT EXISTS datasets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    type TEXT, -- 'train' or 'test'
+    rowCount INTEGER,
+    columnCount INTEGER,
+    features TEXT, -- JSON array
+    target TEXT,
+    content TEXT, -- Store small datasets or metadata
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migration: Add missing columns if they don't exist
@@ -96,7 +107,7 @@ async function startServer() {
     const { 
       dataset_name, sample_size, train_test_split, optimizer, 
       hidden_size, learning_rate, epochs, batch_size,
-      test_accuracy, precision, recall, f1_score, confusion_matrix,
+      test_accuracy, precision, recall, f1_score,
       log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance, logs 
     } = req.body;
     try {
@@ -104,16 +115,15 @@ async function startServer() {
         INSERT INTO experiments (
           dataset_name, sample_size, train_test_split, optimizer, 
           hidden_size, learning_rate, epochs, batch_size,
-          test_accuracy, precision, recall, f1_score, confusion_matrix,
+          test_accuracy, precision, recall, f1_score,
           log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance, logs
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       stmt.run(
         dataset_name, sample_size, train_test_split, optimizer, 
         hidden_size, learning_rate, epochs, batch_size,
         test_accuracy, precision, recall, f1_score, 
-        typeof confusion_matrix === 'string' ? confusion_matrix : JSON.stringify(confusion_matrix),
         log_loss, convergence_rate, training_time, testing_time, execution_time, aulc, loss_variance,
         typeof logs === 'string' ? logs : JSON.stringify(logs)
       );
@@ -122,6 +132,49 @@ async function startServer() {
     } catch (error) {
       console.error('Error in POST /api/experiments:', error);
       res.status(500).json({ error: 'Failed to save experiment' });
+    }
+  });
+
+  app.delete('/api/experiments/:id', (req, res) => {
+    console.log(`DELETE /api/experiments/${req.params.id}`);
+    try {
+      db.prepare('DELETE FROM experiments WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error(`Error in DELETE /api/experiments/${req.params.id}:`, error);
+      res.status(500).json({ error: 'Failed to delete experiment' });
+    }
+  });
+
+  app.get('/api/datasets', (req, res) => {
+    try {
+      const rows = db.prepare('SELECT * FROM datasets ORDER BY timestamp DESC').all();
+      res.json(rows);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch datasets' });
+    }
+  });
+
+  app.post('/api/datasets', (req, res) => {
+    const { name, type, rowCount, columnCount, features, target, content } = req.body;
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO datasets (name, type, rowCount, columnCount, features, target, content)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(name, type, rowCount, columnCount, JSON.stringify(features), target, content);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to save dataset' });
+    }
+  });
+
+  app.delete('/api/datasets/:id', (req, res) => {
+    try {
+      db.prepare('DELETE FROM datasets WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to delete dataset' });
     }
   });
 
