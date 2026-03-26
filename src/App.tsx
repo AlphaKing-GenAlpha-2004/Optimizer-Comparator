@@ -265,15 +265,8 @@ export default function App() {
     let featCols: string[] = [];
     let targetCol = "";
     
-    // For adaptive normalization
-    let colSums: Float64Array | null = null;
-    let colSqSums: Float64Array | null = null;
-    let colCounts: Int32Array | null = null;
-    
-    // For categorical features
-    const catMappings: Record<string, Map<string, number>> = {};
-    const catCounters: Record<string, number> = {};
-
+    // Reset classes if it's a new training file to prevent pollution
+    // If it's a test file, we MUST use the classes from the training file
     let currentClasses: Set<string> = type === 'train' ? new Set<string>() : new Set<string>(classes);
     
     let X: Float32Array | null = null;
@@ -286,13 +279,19 @@ export default function App() {
       dynamicTyping: true,
       skipEmptyLines: true,
       worker: true,
-      chunkSize: 1024 * 1024 * 10,
+      chunkSize: 1024 * 1024 * 10, // 10MB chunks for better performance with large files
       step: (results, parser) => {
         const row = results.data;
         if (rowCount === 0) {
           const cols = Object.keys(row || {});
           
           if (type === 'test') {
+            if (features.length === 0) {
+              setError("Please upload a training dataset first to define features and classes.");
+              parser.abort();
+              setIsProcessing(false);
+              return;
+            }
             featCols = features;
             targetCol = target || cols[0];
           } else {
@@ -302,38 +301,28 @@ export default function App() {
               setIsProcessing(false);
               return;
             }
-            targetCol = cols[0];
-            featCols = cols.slice(1);
+            targetCol = cols[0];        // first column is label
+            featCols = cols.slice(1);   // remaining columns are features
           }
           
           const inputSize = featCols.length;
-          colSums = new Float64Array(inputSize);
-          colSqSums = new Float64Array(inputSize);
-          colCounts = new Int32Array(inputSize);
-
+          
+          // Memory Guard: Check if we can allocate the required TypedArrays
           const totalElements = maxSamples * inputSize;
-          const safeMax = Math.floor(250000000 / inputSize);
-          const effectiveMax = Math.min(maxSamples, safeMax);
-
-          try {
-            X = new Float32Array(effectiveMax * inputSize);
-            y = new Int32Array(effectiveMax);
-          } catch (e) {
-            setError("Memory allocation failed. Try reducing sample size.");
-            parser.abort();
-            setIsProcessing(false);
-            return;
+          if (totalElements > 250000000) { // ~1GB limit for safety in browser
+            setError(`Dataset too large for browser memory. Reducing samples to ${Math.floor(250000000 / inputSize).toLocaleString()}.`);
+            // We'll continue with a smaller maxSamples
           }
 
           let newHiddenSize;
-          if (inputSize <= 100) {
-            newHiddenSize = 32;
-          } else if (inputSize <= 1000) {
-            newHiddenSize = 128;
+          if (inputSize <= 1000) {
+            newHiddenSize = 64; // MNIST-like
           } else if (inputSize <= 3000) {
-            newHiddenSize = 512;
+            newHiddenSize = 256; // CIFAR-10-like
+          } else if (inputSize <= 4000) {
+            newHiddenSize = 512; // CIFAR-100-like
           } else {
-            newHiddenSize = 1024;
+            newHiddenSize = 1024; // High-res
           }
           
           if (type === 'train') {
@@ -341,11 +330,22 @@ export default function App() {
             setTarget(targetCol);
             setParams(prev => ({ ...prev, hiddenSize: newHiddenSize }));
           }
+
+          try {
+            X = new Float32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)) * inputSize);
+            y = new Int32Array(Math.min(maxSamples, Math.floor(250000000 / inputSize)));
+          } catch (e) {
+            setError("Memory allocation failed. Try reducing sample size.");
+            parser.abort();
+            setIsProcessing(false);
+            return;
+          }
         }
 
         const effectiveMax = X ? X.length / featCols.length : 0;
 
         if (rowCount < effectiveMax) {
+          // Store first 10 rows for preview
           if (rowCount < 10) {
             const previewRow: any = {};
             const previewCols = featCols.slice(0, 20);
@@ -354,36 +354,14 @@ export default function App() {
             tempRows.push(previewRow);
           }
 
-          const featCount = featCols.length;
-          const isImageSize = [784, 1024, 2352, 3072].includes(featCount);
-
+          // Process for TypedArrays
           featCols.forEach((f, j) => {
-            let val = row[f];
-            let numericVal = 0;
-
-            if (typeof val === 'string') {
-              // Handle categorical
-              if (!catMappings[f]) {
-                catMappings[f] = new Map<string, number>();
-                catCounters[f] = 0;
-              }
-              if (!catMappings[f].has(val)) {
-                catMappings[f].set(val, catCounters[f]++);
-              }
-              numericVal = catMappings[f].get(val)!;
-            } else {
-              numericVal = parseFloat(val);
-              if (!Number.isFinite(numericVal)) numericVal = 0;
-            }
-            
-            if (X) X[rowCount * featCount + j] = numericVal;
-            
-            // Track stats for normalization (only if not a known image size which has its own logic)
-            if (!isImageSize && colSums && colSqSums && colCounts) {
-              colSums[j] += numericVal;
-              colSqSums[j] += numericVal * numericVal;
-              colCounts[j]++;
-            }
+            let val = parseFloat(row[f]);
+            if (!Number.isFinite(val)) val = 0;
+            // Auto-normalization check: if values are > 1, assume 0-255 range
+            // This is a heuristic, but common for image datasets
+            if (val > 1) val /= 255;
+            if (X) X[rowCount * featCols.length + j] = val;
           });
 
           const targetVal = String(row[targetCol]);
@@ -397,7 +375,7 @@ export default function App() {
         if (rowCount % 5000 === 0) {
           const progress = Math.min(99, (rowCount / maxSamples) * 100);
           setParseProgress(progress);
-          setStatusMessage(`Streaming ${file.name}... ${rowCount.toLocaleString()} rows`);
+          setStatusMessage(`Streaming ${file.name}... ${rowCount.toLocaleString()} rows (${(rowCount * featCols.length * 4 / (1024*1024)).toFixed(1)} MB in memory)`);
         }
         
         if (rowCount >= effectiveMax) {
@@ -406,58 +384,14 @@ export default function App() {
       },
       complete: () => {
         setParseProgress(100);
-        if (rowCount === 0 || !X || !y) {
-          setError("The dataset is empty or processing failed.");
+        if (rowCount === 0) {
+          setError("The dataset is empty.");
           setIsProcessing(false);
           return;
         }
 
-        const finalRowCount = Math.min(rowCount, X.length / featCols.length);
-        const featCount = featCols.length;
-
-        // Final Normalization Pass
-        const isCifar = featCount === 3072;
-        const isMnist = featCount === 784;
-        
-        if (isCifar || isMnist) {
-          const mean = isCifar ? [0.4914, 0.4822, 0.4465] : [0.1307];
-          const std = isCifar ? [0.2470, 0.2435, 0.2616] : [0.3081];
-          const channels = isCifar ? 3 : 1;
-          const planeSize = featCount / channels;
-
-          for (let i = 0; i < finalRowCount; i++) {
-            for (let j = 0; j < featCount; j++) {
-              let val = X[i * featCount + j] / 255.0;
-              const c = Math.floor(j / planeSize);
-              X[i * featCount + j] = (val - mean[c]) / std[c];
-            }
-          }
-        } else if (colSums && colSqSums && colCounts) {
-          // Adaptive Z-score normalization for tabular data
-          const means = new Float32Array(featCount);
-          const stds = new Float32Array(featCount);
-          
-          for (let j = 0; j < featCount; j++) {
-            const count = colCounts[j];
-            if (count > 0) {
-              means[j] = colSums[j] / count;
-              const variance = (colSqSums[j] / count) - (means[j] * means[j]);
-              stds[j] = Math.sqrt(Math.max(1e-8, variance));
-            }
-          }
-
-          for (let i = 0; i < finalRowCount; i++) {
-            for (let j = 0; j < featCount; j++) {
-              X[i * featCount + j] = (X[i * featCount + j] - means[j]) / stds[j];
-            }
-          }
-        }
-
         let finalClasses: string[] = [];
         if (type === 'train') {
-          if (currentClasses.size > 100) {
-            setStatusMessage(`Warning: Detected ${currentClasses.size} unique classes. This might be a regression dataset or have high cardinality. Performance may be slow.`);
-          }
           finalClasses = Array.from(currentClasses).sort();
           setClasses(finalClasses);
         } else {
