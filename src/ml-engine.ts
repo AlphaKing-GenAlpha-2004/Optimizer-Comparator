@@ -23,6 +23,8 @@ export interface TrainingMetric {
   parameterNorm: number;
   throughput: number;
   lossVariance: number;
+  convergenceRate: number;
+  generalizationGap: number;
 }
 
 export interface ExperimentResult {
@@ -41,6 +43,11 @@ export interface ExperimentResult {
   lossVariance: number;
   aulc: number;
   compositeScore?: number;
+  convergenceEpoch85?: number;
+  avgGradientNorm: number;
+  avgGradientVariance: number;
+  avgThroughput: number;
+  avgUpdateRatio: number;
   anovaData?: {
     fValue: number;
     pValue: number;

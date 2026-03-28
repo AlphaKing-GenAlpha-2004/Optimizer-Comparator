@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Component } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
 import { jsPDF } from 'jspdf';
@@ -10,17 +10,113 @@ import {
 } from 'recharts';
 import { 
   Upload, Play, History, BarChart3, Settings, Database, Timer, CheckCircle2, AlertCircle, Info, Pause, PlayCircle,
-  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github, Type, Trash2, RefreshCw, Check
+  Scissors, Download, ChevronRight, Activity, Zap, TrendingDown, Grid3X3, Github, Type, Trash2, RefreshCw, Check, LogIn, LogOut, User as UserIcon
 } from 'lucide-react';
 import { NeuralNetwork, OptimizerType, ModelParams, ExperimentResult, TrainingMetric } from './ml-engine';
 import InfoModal from './components/InfoModal';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { auth, db, googleProvider, signInWithPopup, onAuthStateChanged, collection, addDoc, getDocs, query, where, orderBy, limit, deleteDoc, doc, onSnapshot, User, Timestamp } from './firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+export class ErrorBoundary extends Component<any, any> {
+  state: any;
+  props: any;
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Something went wrong.";
+      try {
+        const parsed = JSON.parse(this.state.error.message);
+        if (parsed.error && parsed.error.includes("insufficient permissions")) {
+          errorMessage = "You don't have permission to perform this action. Please make sure you are logged in.";
+        }
+      } catch (e) {}
+      
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
+          <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-red-100">
+            <div className="flex items-center gap-3 text-red-600 mb-4">
+              <AlertCircle className="w-8 h-8" />
+              <h2 className="text-xl font-bold">Application Error</h2>
+            </div>
+            <p className="text-gray-600 mb-6">{errorMessage}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-700 transition-colors"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   // State
@@ -28,11 +124,16 @@ export default function App() {
   const [testData, setTestData] = useState<any[]>([]);
   const [trainFile, setTrainFile] = useState<File | null>(null);
   const [testFile, setTestFile] = useState<File | null>(null);
+  const [isSingleDatasetMode, setIsSingleDatasetMode] = useState(true);
+  const [splitRatio, setSplitRatio] = useState(0.8);
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   
   const [features, setFeatures] = useState<string[]>([]);
   const [target, setTarget] = useState<string>('');
   const [trainSampleSize, setTrainSampleSize] = useState<number>(10000);
   const [testSampleSize, setTestSampleSize] = useState<number>(2000);
+  const [totalSampleSize, setTotalSampleSize] = useState<number>(12000);
   const [isTextEntryOpen, setIsTextEntryOpen] = useState(false);
   const [textEntryData, setTextEntryData] = useState({ train: '', test: '' });
   
@@ -64,47 +165,74 @@ export default function App() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [history, setHistory] = useState<any[]>([]);
   const [datasets, setDatasets] = useState<any[]>([]);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [currentOptimizer, setCurrentOptimizer] = useState<OptimizerType | null>(null);
   const [currentEpoch, setCurrentEpoch] = useState(0);
 
-  const fetchHistory = async (retries = 3) => {
-    try {
-      const res = await fetch('/api/experiments');
-      if (!res.ok) {
-        throw new Error(`Server responded with ${res.status}`);
-      }
-      const data = await res.json();
-      setHistory(data);
-    } catch (e: any) {
-      console.error('Failed to fetch history', e);
-      // If we get an HTML response, it might be the SPA fallback
-      if (e.message?.includes('Unexpected token')) {
-        console.warn('Received non-JSON response from API. Check server routes.');
-      }
-      if (retries > 0) {
-        console.log(`Retrying fetch history... (${retries} attempts left)`);
-        setTimeout(() => fetchHistory(retries - 1), 2000);
-      }
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const fetchHistory = () => {
+    if (!user) {
+      setHistory([]);
+      return undefined;
     }
+    const q = query(
+      collection(db, 'experiments'),
+      where('uid', '==', user.uid),
+      limit(50)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+      // Sort in memory to avoid index requirement
+      data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setHistory(data);
+    }, (err) => {
+      console.error("History snapshot error:", err);
+      if (err.message.includes("index")) {
+        console.warn("Firestore index required for history query.");
+      }
+    });
   };
 
-  const fetchDatasets = async () => {
-    try {
-      const res = await fetch('/api/datasets');
-      if (res.ok) {
-        const data = await res.json();
-        setDatasets(data);
-      }
-    } catch (e) {
-      console.error('Failed to fetch datasets', e);
+  const fetchDatasets = () => {
+    if (!user) {
+      setDatasets([]);
+      return undefined;
     }
+    const q = query(
+      collection(db, 'datasets'),
+      where('uid', '==', user.uid)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+      // Sort in memory to avoid index requirement
+      data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setDatasets(data);
+    }, (err) => {
+      console.error("Datasets snapshot error:", err);
+    });
   };
 
   useEffect(() => {
-    fetchHistory();
-    fetchDatasets();
-  }, []);
+    let unsubHistory: (() => void) | undefined;
+    let unsubDatasets: (() => void) | undefined;
+    
+    if (isAuthReady && user) {
+      unsubHistory = fetchHistory();
+      unsubDatasets = fetchDatasets();
+    }
+    
+    return () => {
+      unsubHistory?.();
+      unsubDatasets?.();
+    };
+  }, [isAuthReady, user]);
 
   useEffect(() => {
     let interval: any;
@@ -190,13 +318,13 @@ export default function App() {
     if (trainFile) {
       processFile(trainFile, 'train');
     }
-  }, [trainSampleSize]);
+  }, [trainSampleSize, totalSampleSize, splitRatio, isSingleDatasetMode]);
 
   useEffect(() => {
-    if (testFile && features.length > 0) {
+    if (testFile && features.length > 0 && !isSingleDatasetMode) {
       processFile(testFile, 'test');
     }
-  }, [testSampleSize, features, target]);
+  }, [testSampleSize, features, target, isSingleDatasetMode]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'train' | 'test') => {
     const file = e.target.files?.[0];
@@ -206,6 +334,22 @@ export default function App() {
     else setTestFile(file);
 
     processFile(file, type);
+  };
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login failed:", error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   const handleTextEntry = (type: 'train' | 'test') => {
@@ -218,32 +362,31 @@ export default function App() {
   };
 
   const saveDatasetMetadata = async (file: File, type: string, rowCount: number, featCols: string[], targetCol: string) => {
+    if (!user) return;
+    const path = 'datasets';
     try {
-      await fetch('/api/datasets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: file.name,
-          type: type,
-          rowCount: rowCount,
-          columnCount: featCols.length,
-          features: featCols,
-          target: targetCol,
-          content: ''
-        })
+      await addDoc(collection(db, path), {
+        name: file.name,
+        type: type,
+        rowCount: rowCount,
+        columnCount: featCols.length,
+        features: JSON.stringify(featCols),
+        target: targetCol,
+        content: '',
+        uid: user.uid,
+        timestamp: new Date().toISOString()
       });
-      fetchDatasets();
     } catch (err) {
-      console.error("Failed to save dataset metadata:", err);
+      handleFirestoreError(err, OperationType.WRITE, path);
     }
   };
 
-  const deleteDataset = async (id: number) => {
+  const deleteDataset = async (id: string) => {
+    const path = `datasets/${id}`;
     try {
-      await fetch(`/api/datasets/${id}`, { method: 'DELETE' });
-      fetchDatasets();
+      await deleteDoc(doc(db, 'datasets', id));
     } catch (err) {
-      console.error("Failed to delete dataset:", err);
+      handleFirestoreError(err, OperationType.DELETE, path);
     }
   };
 
@@ -259,7 +402,9 @@ export default function App() {
     setParseProgress(0);
     setStatusMessage(`Parsing ${file.name}...`);
 
-    const maxSamples = type === 'train' ? trainSampleSize : testSampleSize;
+    const maxSamples = isSingleDatasetMode 
+      ? totalSampleSize 
+      : (type === 'train' ? trainSampleSize : testSampleSize);
     const tempRows: any[] = [];
     let rowCount = 0;
     let featCols: string[] = [];
@@ -435,10 +580,28 @@ export default function App() {
         if (type === 'train') {
           setTrainData(tempRows);
           if (X && y) {
-            setTrainTensors({ 
-              X: X.subarray(0, rowCount * featCols.length), 
-              y: y.subarray(0, rowCount) 
-            });
+            if (isSingleDatasetMode) {
+              const trainCount = Math.floor(rowCount * splitRatio);
+              const testCount = rowCount - trainCount;
+              const featCount = featCols.length;
+
+              setTrainTensors({
+                X: X.subarray(0, trainCount * featCount),
+                y: y.subarray(0, trainCount)
+              });
+              setTestTensors({
+                X: X.subarray(trainCount * featCount, rowCount * featCount),
+                y: y.subarray(trainCount, rowCount)
+              });
+              setTestData(tempRows.slice(Math.floor(tempRows.length * splitRatio)));
+              setTrainData(tempRows.slice(0, Math.floor(tempRows.length * splitRatio)));
+              setStatusMessage(`Dataset split: ${trainCount.toLocaleString()} train, ${testCount.toLocaleString()} test.`);
+            } else {
+              setTrainTensors({ 
+                X: X.subarray(0, rowCount * featCols.length), 
+                y: y.subarray(0, rowCount) 
+              });
+            }
           }
           if (rowCount >= 100000) setShowWarning(true);
         } else {
@@ -623,33 +786,44 @@ export default function App() {
       setResults(results);
       
       // Save all results to DB
-      for (const res of results) {
-        await fetch('/api/experiments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dataset_name: trainFile?.name,
-            sample_size: trainTensors.y.length,
-            train_test_split: (trainTensors.y.length / (trainTensors.y.length + testTensors.y.length)) * 100,
-            optimizer: res.optimizer,
-            hidden_size: params.hiddenSize,
-            learning_rate: res.learningRate,
-            epochs: params.epochs,
-            batch_size: batchSize,
-            test_accuracy: res.testAccuracy,
-            precision: res.precision,
-            recall: res.recall,
-            f1_score: res.f1Score,
-            log_loss: res.logLoss,
-            convergence_rate: res.convergenceRate,
-            training_time: res.trainingTime,
-            testing_time: res.testingTime,
-            execution_time: res.executionTime,
-            aulc: res.aulc,
-            loss_variance: res.lossVariance,
-            logs: JSON.stringify(res.metrics)
-          })
-        });
+      if (user) {
+        const path = 'experiments';
+        console.log(`Saving ${results.length} experiments to Firestore...`);
+        for (const res of results) {
+          try {
+            await addDoc(collection(db, path), {
+              dataset_name: trainFile?.name || 'Manual Entry',
+              sample_size: trainTensors.y.length,
+              train_test_split: (trainTensors.y.length / (trainTensors.y.length + testTensors.y.length)) * 100,
+              optimizer: res.optimizer,
+              hidden_size: params.hiddenSize,
+              learning_rate: res.learningRate,
+              epochs: params.epochs,
+              batch_size: batchSize,
+              test_accuracy: res.testAccuracy,
+              precision: res.precision,
+              recall: res.recall,
+              f1_score: res.f1Score,
+              log_loss: res.logLoss,
+              convergence_rate: res.convergenceRate,
+              training_time: res.trainingTime,
+              testing_time: res.testingTime,
+              execution_time: res.executionTime,
+              aulc: res.aulc,
+              loss_variance: res.lossVariance,
+              convergence_epoch_85: res.convergenceEpoch85 || null,
+              avg_gradient_norm: res.avgGradientNorm,
+              avg_gradient_variance: res.avgGradientVariance,
+              avg_throughput: res.avgThroughput,
+              avg_update_ratio: res.avgUpdateRatio,
+              logs: JSON.stringify(res.metrics),
+              uid: user.uid,
+              timestamp: new Date().toISOString()
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.WRITE, path);
+          }
+        }
       }
       
       setStatusMessage("Parallel training complete.");
@@ -676,39 +850,57 @@ export default function App() {
     // Extract all metrics for boundary calculation
     const metrics = {
       testAccuracy: results.map(r => r.testAccuracy),
+      trainAccuracy: results.map(r => r.metrics[r.metrics.length - 1]?.trainAccuracy || 0),
+      trainLoss: results.map(r => r.metrics[r.metrics.length - 1]?.loss || 10),
       f1Score: results.map(r => r.f1Score),
       logLoss: results.map(r => r.logLoss),
       convergenceRate: results.map(r => r.convergenceRate),
+      convergenceEpoch85: results.map(r => r.convergenceEpoch85 || (params.epochs + 1)),
       trainingTime: results.map(r => r.trainingTime),
       lossVariance: results.map(r => r.lossVariance),
       aulc: results.map(r => r.aulc),
+      avgGradientNorm: results.map(r => r.avgGradientNorm),
+      avgUpdateRatio: results.map(r => r.avgUpdateRatio)
     };
 
     const bounds = {
       testAccuracy: { min: Math.min(...metrics.testAccuracy), max: Math.max(...metrics.testAccuracy) },
+      trainAccuracy: { min: Math.min(...metrics.trainAccuracy), max: Math.max(...metrics.trainAccuracy) },
+      trainLoss: { min: Math.min(...metrics.trainLoss), max: Math.max(...metrics.trainLoss) },
       f1Score: { min: Math.min(...metrics.f1Score), max: Math.max(...metrics.f1Score) },
       logLoss: { min: Math.min(...metrics.logLoss), max: Math.max(...metrics.logLoss) },
       convergenceRate: { min: Math.min(...metrics.convergenceRate), max: Math.max(...metrics.convergenceRate) },
+      convergenceEpoch85: { min: Math.min(...metrics.convergenceEpoch85), max: Math.max(...metrics.convergenceEpoch85) },
       trainingTime: { min: Math.min(...metrics.trainingTime), max: Math.max(...metrics.trainingTime) },
       lossVariance: { min: Math.min(...metrics.lossVariance), max: Math.max(...metrics.lossVariance) },
       aulc: { min: Math.min(...metrics.aulc), max: Math.max(...metrics.aulc) },
+      avgGradientNorm: { min: Math.min(...metrics.avgGradientNorm), max: Math.max(...metrics.avgGradientNorm) },
+      avgUpdateRatio: { min: Math.min(...metrics.avgUpdateRatio), max: Math.max(...metrics.avgUpdateRatio) }
     };
 
     // Calculate composite score for each result
-    // Weights are distributed based on importance:
-    // Accuracy (30%), F1 (15%), LogLoss (15%), Convergence (10%), Time (10%), Stability/Var (10%), AULC (10%)
+    // Weights are distributed based on user-requested metrics:
+    // Test Accuracy (20%), Training Accuracy (15%), Training Loss (15%), 
+    // Convergence Rate (15%), Convergence Epoch 85% (15%), Gradient Norm (10%),
+    // F1 Score (5%), Stability/Var (5%)
     const scored = results.map(res => {
-      const sAccuracy = normalize(res.testAccuracy, bounds.testAccuracy.min, bounds.testAccuracy.max) * 0.30;
-      const sF1 = normalize(res.f1Score, bounds.f1Score.min, bounds.f1Score.max) * 0.15;
-      const sLogLoss = normalize(res.logLoss, bounds.logLoss.min, bounds.logLoss.max, true) * 0.15;
-      const sConv = normalize(res.convergenceRate, bounds.convergenceRate.min, bounds.convergenceRate.max) * 0.10;
-      const sTime = normalize(res.trainingTime, bounds.trainingTime.min, bounds.trainingTime.max, true) * 0.10;
-      const sVar = normalize(res.lossVariance, bounds.lossVariance.min, bounds.lossVariance.max, true) * 0.10;
-      const sAulc = normalize(res.aulc, bounds.aulc.min, bounds.aulc.max) * 0.10; // Higher AULC (accuracy) is better
+      const lastMetric = res.metrics[res.metrics.length - 1];
+      const trainAcc = lastMetric?.trainAccuracy || 0;
+      const trainLoss = lastMetric?.loss || 10;
+      const convEpoch = res.convergenceEpoch85 || (params.epochs + 1);
+
+      const sTestAcc = normalize(res.testAccuracy, bounds.testAccuracy.min, bounds.testAccuracy.max) * 0.20;
+      const sTrainAcc = normalize(trainAcc, bounds.trainAccuracy.min, bounds.trainAccuracy.max) * 0.15;
+      const sTrainLoss = normalize(trainLoss, bounds.trainLoss.min, bounds.trainLoss.max, true) * 0.15;
+      const sConvRate = normalize(res.convergenceRate, bounds.convergenceRate.min, bounds.convergenceRate.max) * 0.15;
+      const sConvEpoch = normalize(convEpoch, bounds.convergenceEpoch85.min, bounds.convergenceEpoch85.max, true) * 0.15;
+      const sGradNorm = normalize(res.avgGradientNorm, bounds.avgGradientNorm.min, bounds.avgGradientNorm.max, true) * 0.10;
+      const sF1 = normalize(res.f1Score, bounds.f1Score.min, bounds.f1Score.max) * 0.05;
+      const sVar = normalize(res.lossVariance, bounds.lossVariance.min, bounds.lossVariance.max, true) * 0.05;
 
       return {
         ...res,
-        compositeScore: sAccuracy + sF1 + sLogLoss + sConv + sTime + sVar + sAulc
+        compositeScore: sTestAcc + sTrainAcc + sTrainLoss + sConvRate + sConvEpoch + sGradNorm + sF1 + sVar
       };
     });
 
@@ -716,7 +908,7 @@ export default function App() {
     return scored.sort((a, b) => b.compositeScore - a.compositeScore)[0];
   }, [results]);
 
-  const deleteExperiment = async (id: number, e: React.MouseEvent) => {
+  const deleteExperiment = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     // If we're not already confirming this one, set it to confirm
@@ -728,34 +920,30 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/experiments/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setHistory(prev => prev.filter(exp => exp.id !== id));
-        setConfirmDeleteId(null);
-        if (selectedExperiment?.id === id) {
-          setIsViewingReport(false);
-          setSelectedExperiment(null);
-        }
+      await deleteDoc(doc(db, 'experiments', id));
+      setConfirmDeleteId(null);
+      if (selectedExperiment?.id === id) {
+        setIsViewingReport(false);
+        setSelectedExperiment(null);
       }
     } catch (err) {
-      console.error('Failed to delete experiment', err);
+      handleFirestoreError(err, OperationType.DELETE, `experiments/${id}`);
     }
   };
 
-  const fetchExperimentDetails = async (id: number) => {
-    try {
-      const res = await fetch(`/api/experiments/${id}`);
-      const data = await res.json();
+  const fetchExperimentDetails = (id: string) => {
+    const exp = history.find(h => h.id === id);
+    if (exp) {
+      const data = { ...exp };
       if (typeof data.logs === 'string') {
-        data.logs = JSON.parse(data.logs);
-      }
-      if (typeof data.confusion_matrix === 'string') {
-        data.confusion_matrix = JSON.parse(data.confusion_matrix);
+        try {
+          data.logs = JSON.parse(data.logs);
+        } catch (e) {
+          console.error("Failed to parse logs:", e);
+        }
       }
       setSelectedExperiment(data);
       setIsViewingReport(true);
-    } catch (e) {
-      console.error('Failed to fetch experiment details', e);
     }
   };
 
@@ -1038,29 +1226,45 @@ export default function App() {
     <div className="min-h-screen bg-[#F5F5F4] text-[#1C1917] font-sans flex">
       {/* Sidebar */}
       <aside className="w-80 bg-white border-r border-[#E7E5E4] p-6 flex flex-col gap-8 overflow-y-auto">
-        <div className="flex items-center gap-3">
-          <div className="bg-[#1C1917] p-2 rounded-lg">
-            <Database className="text-white w-5 h-5" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-[#1C1917] p-2 rounded-lg">
+              <Database className="text-white w-5 h-5" />
+            </div>
+            <div className="flex items-center gap-2">
+              <h1 className="font-bold text-lg tracking-tight">Neur-O-Opt Lab</h1>
+              <button 
+                onClick={() => setIsHelpOpen(true)}
+                className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
+                title="Learn about Optimizers"
+              >
+                <Info className="w-4 h-4 text-[#78716C] group-hover:text-emerald-600" />
+              </button>
+              <a 
+                href="https://github.com/AlphaKing-GenAlpha-2004/Optimizer-Comparator.git"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
+                title="View on GitHub"
+              >
+                <Github className="w-4 h-4 text-[#78716C] group-hover:text-[#1C1917]" />
+              </a>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-bold text-lg tracking-tight">Neur-O-Opt Lab</h1>
-            <button 
-              onClick={() => setIsHelpOpen(true)}
-              className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
-              title="Learn about Optimizers"
-            >
-              <Info className="w-4 h-4 text-[#78716C] group-hover:text-emerald-600" />
-            </button>
-            <a 
-              href="https://github.com/AlphaKing-GenAlpha-2004/Optimizer-Comparator.git"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1 hover:bg-[#F5F5F4] rounded-full transition-colors group relative"
-              title="View on GitHub"
-            >
-              <Github className="w-4 h-4 text-[#78716C] group-hover:text-[#1C1917]" />
-            </a>
-          </div>
+          {isAuthReady && (
+            user ? (
+              <div className="flex items-center gap-2">
+                {user.photoURL && <img src={user.photoURL} alt="User" className="w-6 h-6 rounded-full border border-[#E7E5E4]" referrerPolicy="no-referrer" />}
+                <button onClick={handleLogout} className="p-2 hover:bg-red-50 rounded-full transition-colors group" title="Logout">
+                  <LogOut className="w-4 h-4 text-[#78716C] group-hover:text-red-600" />
+                </button>
+              </div>
+            ) : (
+              <button onClick={handleLogin} className="p-2 hover:bg-emerald-50 rounded-full transition-colors group" title="Login with Google">
+                <LogIn className="w-4 h-4 text-[#78716C] group-hover:text-emerald-600" />
+              </button>
+            )
+          )}
         </div>
 
         {/* Dataset Upload */}
@@ -1079,6 +1283,45 @@ export default function App() {
             </button>
           </div>
 
+          <div className="flex items-center justify-between p-2 bg-[#F5F5F4] rounded-xl">
+            <span className="text-[10px] font-bold text-[#78716C] uppercase">Single Dataset Mode (Auto Split)</span>
+            <button 
+              onClick={() => {
+                const newMode = !isSingleDatasetMode;
+                if (newMode) {
+                  setTotalSampleSize(trainSampleSize + testSampleSize);
+                } else {
+                  setTrainSampleSize(Math.floor(totalSampleSize * splitRatio));
+                  setTestSampleSize(totalSampleSize - Math.floor(totalSampleSize * splitRatio));
+                }
+                setIsSingleDatasetMode(newMode);
+              }}
+              className={cn(
+                "w-10 h-5 rounded-full transition-colors relative",
+                isSingleDatasetMode ? "bg-emerald-500" : "bg-[#E7E5E4]"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                isSingleDatasetMode ? "left-6" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          {isSingleDatasetMode && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-[11px] font-medium">
+                <span>Train-Test Split</span>
+                <span className="text-[10px] text-[#78716C] font-bold">{(splitRatio * 100).toFixed(0)}% / {((1 - splitRatio) * 100).toFixed(0)}%</span>
+              </div>
+              <input 
+                type="range" min="0.5" max="0.95" step="0.05" value={splitRatio}
+                onChange={(e) => setSplitRatio(parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+              />
+            </div>
+          )}
+
           <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
             <div className="flex items-center gap-2 text-blue-800 font-bold text-[10px] uppercase mb-1">
               <Info className="w-3 h-3" />
@@ -1092,7 +1335,7 @@ export default function App() {
           {isTextEntryOpen ? (
             <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="space-y-2">
-                <label className="block text-[11px] font-bold text-[#78716C] uppercase">Training Data (CSV Format)</label>
+                <label className="block text-[11px] font-bold text-[#78716C] uppercase">{isSingleDatasetMode ? 'Dataset' : 'Training Data'} (CSV Format)</label>
                 <textarea 
                   value={textEntryData.train}
                   onChange={(e) => setTextEntryData({...textEntryData, train: e.target.value})}
@@ -1104,30 +1347,32 @@ export default function App() {
                   disabled={!textEntryData.train.trim()}
                   className="w-full py-2 bg-[#1C1917] text-white text-[10px] font-bold rounded-lg hover:bg-black disabled:opacity-50 transition-all"
                 >
-                  Process Training Text
+                  Process {isSingleDatasetMode ? 'Dataset' : 'Training Text'}
                 </button>
               </div>
-              <div className="space-y-2">
-                <label className="block text-[11px] font-bold text-[#78716C] uppercase">Testing Data (CSV Format)</label>
-                <textarea 
-                  value={textEntryData.test}
-                  onChange={(e) => setTextEntryData({...textEntryData, test: e.target.value})}
-                  placeholder="label,feat1,feat2...&#10;0,0.4,0.3...&#10;1,0.2,0.7..."
-                  className="w-full h-32 bg-[#F5F5F4] border-none rounded-xl p-3 text-xs font-mono focus:ring-1 ring-[#1C1917] resize-none"
-                />
-                <button 
-                  onClick={() => handleTextEntry('test')}
-                  disabled={!textEntryData.test.trim()}
-                  className="w-full py-2 bg-[#1C1917] text-white text-[10px] font-bold rounded-lg hover:bg-black disabled:opacity-50 transition-all"
-                >
-                  Process Testing Text
-                </button>
-              </div>
+              {!isSingleDatasetMode && (
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-bold text-[#78716C] uppercase">Testing Data (CSV Format)</label>
+                  <textarea 
+                    value={textEntryData.test}
+                    onChange={(e) => setTextEntryData({...textEntryData, test: e.target.value})}
+                    placeholder="label,feat1,feat2...&#10;0,0.4,0.3...&#10;1,0.2,0.7..."
+                    className="w-full h-32 bg-[#F5F5F4] border-none rounded-xl p-3 text-xs font-mono focus:ring-1 ring-[#1C1917] resize-none"
+                  />
+                  <button 
+                    onClick={() => handleTextEntry('test')}
+                    disabled={!textEntryData.test.trim()}
+                    className="w-full py-2 bg-[#1C1917] text-white text-[10px] font-bold rounded-lg hover:bg-black disabled:opacity-50 transition-all"
+                  >
+                    Process Testing Text
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium mb-1">Training CSV</label>
+                <label className="block text-sm font-medium mb-1">{isSingleDatasetMode ? 'Dataset CSV' : 'Training CSV'}</label>
                 <input 
                   type="file" accept=".csv,.txt" 
                   onChange={(e) => handleFileUpload(e, 'train')}
@@ -1135,15 +1380,17 @@ export default function App() {
                 />
                 {trainFile && <div className="mt-1 text-[10px] text-emerald-600 font-bold">Loaded: {trainFile.name} ({(trainFile.size / (1024*1024)).toFixed(2)} MB)</div>}
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Testing CSV</label>
-                <input 
-                  type="file" accept=".csv,.txt" 
-                  onChange={(e) => handleFileUpload(e, 'test')}
-                  className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
-                />
-                {testFile && <div className="mt-1 text-[10px] text-emerald-600 font-bold">Loaded: {testFile.name} ({(testFile.size / (1024*1024)).toFixed(2)} MB)</div>}
-              </div>
+              {!isSingleDatasetMode && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Testing CSV</label>
+                  <input 
+                    type="file" accept=".csv,.txt" 
+                    onChange={(e) => handleFileUpload(e, 'test')}
+                    className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-[#F5F5F4] file:text-[#1C1917] hover:file:bg-[#E7E5E4] cursor-pointer"
+                  />
+                  {testFile && <div className="mt-1 text-[10px] text-emerald-600 font-bold">Loaded: {testFile.name} ({(testFile.size / (1024*1024)).toFixed(2)} MB)</div>}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -1155,56 +1402,86 @@ export default function App() {
             Sampling & Large File Support
           </div>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between items-center text-[11px] font-medium">
-                <span>Training Samples</span>
-                <div className="flex items-center gap-1">
-                  <input 
-                    type="number"
-                    min="50"
-                    max={getDynamicSampleSizeLimit(features.length)}
-                    value={trainSampleSize}
-                    onChange={(e) => setTrainSampleSize(Math.max(50, parseInt(e.target.value) || 0))}
-                    className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
-                  />
-                  <span className="text-[10px] text-[#A8A29E]">{trainSampleSize >= 1000000 ? `${(trainSampleSize/1000000).toFixed(1)}M` : ''}</span>
+            {isSingleDatasetMode ? (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-[11px] font-medium">
+                  <span>Total Samples</span>
+                  <div className="flex items-center gap-1">
+                    <input 
+                      type="number"
+                      min="100"
+                      max={getDynamicSampleSizeLimit(features.length)}
+                      value={totalSampleSize}
+                      onChange={(e) => setTotalSampleSize(Math.max(100, parseInt(e.target.value) || 0))}
+                      className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
+                    />
+                    <span className="text-[10px] text-[#A8A29E]">{totalSampleSize >= 1000000 ? `${(totalSampleSize/1000000).toFixed(1)}M` : ''}</span>
+                  </div>
+                </div>
+                <input 
+                  type="range" min="100" max={getDynamicSampleSizeLimit(features.length)} step="100" value={totalSampleSize}
+                  onChange={(e) => setTotalSampleSize(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+                />
+                <div className="flex justify-between text-[10px] text-[#A8A29E]">
+                  <span>100</span>
+                  <span>{getDynamicSampleSizeLimit(features.length) >= 1000000 ? `${(getDynamicSampleSizeLimit(features.length)/1000000).toFixed(1)}M` : (getDynamicSampleSizeLimit(features.length)/1000).toFixed(0) + 'k'}</span>
                 </div>
               </div>
-              <input 
-                type="range" min="50" max={getDynamicSampleSizeLimit(features.length)} step="50" value={trainSampleSize}
-                onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
-              />
-              <div className="flex justify-between text-[10px] text-[#A8A29E]">
-                <span>50</span>
-                <span>{getDynamicSampleSizeLimit(features.length) >= 1000000 ? `${(getDynamicSampleSizeLimit(features.length)/1000000).toFixed(1)}M` : (getDynamicSampleSizeLimit(features.length)/1000).toFixed(0) + 'k'}</span>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center text-[11px] font-medium">
-                <span>Testing Samples</span>
-                <div className="flex items-center gap-1">
-                  <input 
-                    type="number"
-                    min="20"
-                    max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)}
-                    value={testSampleSize}
-                    onChange={(e) => setTestSampleSize(Math.max(20, parseInt(e.target.value) || 0))}
-                    className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
-                  />
-                  <span className="text-[10px] text-[#A8A29E]">{testSampleSize >= 1000000 ? `${(testSampleSize/1000000).toFixed(1)}M` : ''}</span>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-[11px] font-medium">
+                    <span>Training Samples</span>
+                  <div className="flex items-center gap-1">
+                    <input 
+                      type="number"
+                      min="50"
+                      max={getDynamicSampleSizeLimit(features.length)}
+                      value={trainSampleSize}
+                      onChange={(e) => setTrainSampleSize(Math.max(50, parseInt(e.target.value) || 0))}
+                      className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
+                    />
+                    <span className="text-[10px] text-[#A8A29E]">{trainSampleSize >= 1000000 ? `${(trainSampleSize/1000000).toFixed(1)}M` : ''}</span>
+                  </div>
+                </div>
+                <input 
+                  type="range" min="50" max={getDynamicSampleSizeLimit(features.length)} step="50" value={trainSampleSize}
+                  onChange={(e) => setTrainSampleSize(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+                />
+                <div className="flex justify-between text-[10px] text-[#A8A29E]">
+                  <span>50</span>
+                  <span>{getDynamicSampleSizeLimit(features.length) >= 1000000 ? `${(getDynamicSampleSizeLimit(features.length)/1000000).toFixed(1)}M` : (getDynamicSampleSizeLimit(features.length)/1000).toFixed(0) + 'k'}</span>
                 </div>
               </div>
-              <input 
-                type="range" min="20" max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)} step="10" value={testSampleSize}
-                onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
-              />
-              <div className="flex justify-between text-[10px] text-[#A8A29E]">
-                <span>20</span>
-                <span>{Math.floor(getDynamicSampleSizeLimit(features.length) / 2) >= 1000000 ? `${(Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000000).toFixed(1)}M` : (Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000).toFixed(0) + 'k'}</span>
-              </div>
-            </div>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-[11px] font-medium">
+                  <span>Testing Samples</span>
+                  <div className="flex items-center gap-1">
+                    <input 
+                      type="number"
+                      min="20"
+                      max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)}
+                      value={testSampleSize}
+                      onChange={(e) => setTestSampleSize(Math.max(20, parseInt(e.target.value) || 0))}
+                      className="w-20 px-1 py-0.5 text-right bg-transparent border-b border-[#E7E5E4] focus:border-[#1C1917] outline-none text-[#78716C] text-[10px]"
+                    />
+                    <span className="text-[10px] text-[#A8A29E]">{testSampleSize >= 1000000 ? `${(testSampleSize/1000000).toFixed(1)}M` : ''}</span>
+                  </div>
+                </div>
+                <input 
+                  type="range" min="20" max={Math.floor(getDynamicSampleSizeLimit(features.length) / 2)} step="10" value={testSampleSize}
+                  onChange={(e) => setTestSampleSize(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-[#F5F5F4] rounded-lg appearance-none cursor-pointer accent-[#1C1917]"
+                />
+                <div className="flex justify-between text-[10px] text-[#A8A29E]">
+                  <span>20</span>
+                  <span>{Math.floor(getDynamicSampleSizeLimit(features.length) / 2) >= 1000000 ? `${(Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000000).toFixed(1)}M` : (Math.floor(getDynamicSampleSizeLimit(features.length) / 2)/1000).toFixed(0) + 'k'}</span>
+                </div>
+                </div>
+              </>
+            )}
             {(trainFile?.size || 0) > 500 * 1024 * 1024 && (
               <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl">
                 <div className="flex items-center gap-2 text-amber-800 font-bold text-[10px] uppercase mb-1">
@@ -1378,12 +1655,21 @@ export default function App() {
             ) : (
               <button 
                 onClick={startTraining}
-                disabled={!trainFile || !testFile}
+                disabled={isSingleDatasetMode ? !trainFile : (!trainFile || !testFile)}
                 className="flex-1 bg-[#1C1917] text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-[#44403C] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="w-4 h-4 fill-current" />
                 Start
               </button>
+            )}
+            {isAuthReady && !user && !isTraining && (
+              <div className="mt-2 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-2 text-amber-800 text-[10px] leading-relaxed">
+                <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                <div>
+                  <span className="font-bold">Not Logged In:</span> Your experiment results will not be saved to history. 
+                  <button onClick={handleLogin} className="ml-1 underline font-bold hover:text-amber-900">Login with Google</button> to enable history.
+                </div>
+              </div>
             )}
             {isTraining && (
               <button 
@@ -1645,10 +1931,21 @@ export default function App() {
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
-                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} />
+                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F5F5F4" />
+                    <XAxis 
+                      dataKey="epoch" 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -15, fontSize: 12, fontWeight: 'bold' }}
+                    />
+                    <YAxis 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Loss', angle: -90, position: 'insideLeft', offset: 10, fontSize: 12, fontWeight: 'bold' }}
+                    />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
                     {results.map((res, i) => (
@@ -1674,10 +1971,22 @@ export default function App() {
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
-                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} domain={[0, 1]} />
+                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F5F5F4" />
+                    <XAxis 
+                      dataKey="epoch" 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -15, fontSize: 12, fontWeight: 'bold' }}
+                    />
+                    <YAxis 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      domain={[0, 1]} 
+                      label={{ value: 'Accuracy', angle: -90, position: 'insideLeft', offset: 10, fontSize: 12, fontWeight: 'bold' }}
+                    />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
                     {results.map((res, i) => (
@@ -1704,10 +2013,22 @@ export default function App() {
               </h3>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
-                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} domain={[0, 1]} />
+                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F5F5F4" />
+                    <XAxis 
+                      dataKey="epoch" 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -15, fontSize: 12, fontWeight: 'bold' }}
+                    />
+                    <YAxis 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      domain={[0, 1]} 
+                      label={{ value: 'Accuracy', angle: -90, position: 'insideLeft', offset: 10, fontSize: 12, fontWeight: 'bold' }}
+                    />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
                     {results.map((res, i) => {
@@ -1761,10 +2082,21 @@ export default function App() {
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
-                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} />
+                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F5F5F4" />
+                    <XAxis 
+                      dataKey="epoch" 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -15, fontSize: 12, fontWeight: 'bold' }}
+                    />
+                    <YAxis 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Grad Norm', angle: -90, position: 'insideLeft', offset: 10, fontSize: 12, fontWeight: 'bold' }}
+                    />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
                     {results.map((res, i) => (
@@ -1790,10 +2122,21 @@ export default function App() {
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F5F5F4" />
-                    <XAxis dataKey="epoch" axisLine={false} tickLine={false} tick={{fontSize: 10}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} />
+                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F5F5F4" />
+                    <XAxis 
+                      dataKey="epoch" 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Epoch', position: 'insideBottom', offset: -15, fontSize: 12, fontWeight: 'bold' }}
+                    />
+                    <YAxis 
+                      axisLine={true} 
+                      tickLine={true} 
+                      tick={{fontSize: 10}} 
+                      label={{ value: 'Update Ratio', angle: -90, position: 'insideLeft', offset: 10, fontSize: 12, fontWeight: 'bold' }}
+                    />
                     <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
                     <Legend iconType="circle" wrapperStyle={{fontSize: 10, paddingTop: 20}} />
                     {results.map((res, i) => (
@@ -1827,14 +2170,12 @@ export default function App() {
                     <th className="px-6 py-4 font-semibold">Optimizer</th>
                     <th className="px-6 py-4 font-semibold">Accuracy</th>
                     <th className="px-6 py-4 font-semibold">F1 Score</th>
-                    <th className="px-6 py-4 font-semibold">Precision</th>
-                    <th className="px-6 py-4 font-semibold">Recall</th>
                     <th className="px-6 py-4 font-semibold">Log Loss</th>
-                    <th className="px-6 py-4 font-semibold">Convergence</th>
-                    <th className="px-6 py-4 font-semibold">AULC</th>
-                    <th className="px-6 py-4 font-semibold">Loss Variance</th>
+                    <th className="px-6 py-4 font-semibold">Conv. Epoch (85%)</th>
+                    <th className="px-6 py-4 font-semibold">Avg Grad Norm</th>
+                    <th className="px-6 py-4 font-semibold">Avg Update Ratio</th>
+                    <th className="px-6 py-4 font-semibold">Throughput</th>
                     <th className="px-6 py-4 font-semibold">Train Time</th>
-                    <th className="px-6 py-4 font-semibold">Test Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E7E5E4]">
@@ -1846,14 +2187,12 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4">{safeFixed(res.testAccuracy, 1, 100, '%')}</td>
                       <td className="px-6 py-4">{safeFixed(res.f1Score, 1, 100, '%')}</td>
-                      <td className="px-6 py-4">{safeFixed(res.precision, 1, 100, '%')}</td>
-                      <td className="px-6 py-4">{safeFixed(res.recall, 1, 100, '%')}</td>
                       <td className="px-6 py-4">{safeFixed(res.logLoss, 4)}</td>
-                      <td className="px-6 py-4">{safeFixed(res.convergenceRate, 4)}</td>
-                      <td className="px-6 py-4">{safeFixed(res.aulc, 4)}</td>
-                      <td className="px-6 py-4">{safeFixed(res.lossVariance, 6)}</td>
+                      <td className="px-6 py-4">{res.convergenceEpoch85 || 'N/A'}</td>
+                      <td className="px-6 py-4">{safeFixed(res.avgGradientNorm, 4)}</td>
+                      <td className="px-6 py-4">{safeFixed(res.avgUpdateRatio, 6)}</td>
+                      <td className="px-6 py-4">{safeFixed(res.avgThroughput, 0, 1, ' img/s')}</td>
                       <td className="px-6 py-4">{safeFixed(res.trainingTime, 1, 1, 's')}</td>
-                      <td className="px-6 py-4">{safeFixed(res.testingTime, 3, 1, 's')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1872,37 +2211,37 @@ export default function App() {
               <div className="space-y-1">
                 <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Accuracy</div>
                 <p className="text-xs text-blue-700 leading-relaxed">
-                  The percentage of total correct predictions. Calculated as <b>(TP + TN) / Total Samples</b>.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Precision (Macro)</div>
-                <p className="text-xs text-blue-700 leading-relaxed">
-                  The average accuracy of positive predictions across all classes. <b>TP / (TP + FP)</b>.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Recall (Macro)</div>
-                <p className="text-xs text-blue-700 leading-relaxed">
-                  The ability to find all positive instances across all classes. <b>TP / (TP + FN)</b>.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">F1 Score (Macro)</div>
-                <p className="text-xs text-blue-700 leading-relaxed">
-                  The harmonic mean of Precision and Recall. Best for datasets with <b>class imbalance</b>.
+                  The percentage of total correct predictions. Indicates the model's overall correctness.
                 </p>
               </div>
               <div className="space-y-1">
                 <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Log Loss</div>
                 <p className="text-xs text-blue-700 leading-relaxed">
-                  Measures the performance of a classification model where the prediction input is a <b>probability value</b>.
+                  Measures the performance of a classification model where the prediction input is a <b>probability value</b>. Lower is better.
                 </p>
               </div>
               <div className="space-y-1">
-                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">AULC</div>
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Gradient Norm</div>
                 <p className="text-xs text-blue-700 leading-relaxed">
-                  <b>Area Under Learning Curve</b>. Measures how quickly and consistently the model learns over time.
+                  Magnitude of gradients. High values indicate <b>exploding gradients</b>, while near-zero values indicate <b>vanishing gradients</b> or convergence.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Update Ratio</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Ratio of update magnitude to parameter magnitude. A healthy ratio is around <b>1e-3</b>. Too high means learning rate is too large.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Convergence Epoch (85%)</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  The first epoch where the model reaches <b>85% test accuracy</b>. Measures the speed of optimization.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Throughput</div>
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  Number of training samples processed per second. Measures the <b>computational efficiency</b> of the optimizer.
                 </p>
               </div>
             </div>
@@ -1922,14 +2261,22 @@ export default function App() {
                   </p>
                 </div>
                 <div className="mt-6 pt-6 border-t border-white/20">
-                  <div className="flex justify-between items-end">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold opacity-60">Test Accuracy</div>
+                      <div className="text-xl font-black">{safeFixed(bestOptimizer.testAccuracy, 2, 100, '%')}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold opacity-60">F1 Score</div>
+                      <div className="text-xl font-black">{safeFixed(bestOptimizer.f1Score, 2, 100, '%')}</div>
+                    </div>
                     <div>
                       <div className="text-[10px] uppercase font-bold opacity-60">Log Loss</div>
                       <div className="text-xl font-black">{safeFixed(bestOptimizer.logLoss, 4)}</div>
                     </div>
                     <div>
-                      <div className="text-[10px] uppercase font-bold opacity-60">F1 Score</div>
-                      <div className="text-xl font-black">{safeFixed(bestOptimizer.f1Score, 2, 100, '%')}</div>
+                      <div className="text-[10px] uppercase font-bold opacity-60">Conv. Epoch (85%)</div>
+                      <div className="text-xl font-black">{bestOptimizer.convergenceEpoch85 || 'N/A'}</div>
                     </div>
                   </div>
                 </div>

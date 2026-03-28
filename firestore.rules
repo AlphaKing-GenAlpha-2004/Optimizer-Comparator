@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+    
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidExperiment(data) {
+      return data.dataset_name is string && data.dataset_name.size() < 255 &&
+             data.optimizer is string && data.optimizer.size() < 50 &&
+             data.test_accuracy is number &&
+             data.uid == request.auth.uid &&
+             data.timestamp != null;
+    }
+
+    function isValidDataset(data) {
+      return data.name is string && data.name.size() < 255 &&
+             data.uid == request.auth.uid &&
+             data.timestamp != null;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /experiments/{experimentId} {
+      allow read: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow create: if isAuthenticated() && isValidExperiment(request.resource.data) && uidUnchanged();
+      allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && isValidExperiment(request.resource.data) && uidNotModified();
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+
+    match /datasets/{datasetId} {
+      allow read: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow create: if isAuthenticated() && isValidDataset(request.resource.data) && uidUnchanged();
+      allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && isValidDataset(request.resource.data) && uidNotModified();
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+    
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

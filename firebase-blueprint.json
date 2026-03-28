@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Experiment": {
+      "title": "Experiment",
+      "description": "A machine learning experiment result",
+      "type": "object",
+      "properties": {
+        "dataset_name": { "type": "string" },
+        "sample_size": { "type": "integer" },
+        "train_test_split": { "type": "number" },
+        "optimizer": { "type": "string" },
+        "hidden_size": { "type": "integer" },
+        "learning_rate": { "type": "number" },
+        "epochs": { "type": "integer" },
+        "batch_size": { "type": "integer" },
+        "test_accuracy": { "type": "number" },
+        "precision": { "type": "number" },
+        "recall": { "type": "number" },
+        "f1_score": { "type": "number" },
+        "log_loss": { "type": "number" },
+        "convergence_rate": { "type": "number" },
+        "training_time": { "type": "number" },
+        "testing_time": { "type": "number" },
+        "execution_time": { "type": "number" },
+        "aulc": { "type": "number" },
+        "loss_variance": { "type": "number" },
+        "logs": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "uid": { "type": "string" }
+      },
+      "required": ["dataset_name", "optimizer", "test_accuracy", "uid", "timestamp"]
+    },
+    "Dataset": {
+      "title": "Dataset",
+      "description": "Metadata for a dataset",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "rowCount": { "type": "integer" },
+        "columnCount": { "type": "integer" },
+        "features": { "type": "string" },
+        "target": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "uid": { "type": "string" }
+      },
+      "required": ["name", "uid", "timestamp"]
+    }
+  },
+  "firestore": {
+    "experiments": {
+      "schema": "Experiment",
+      "description": "Collection of experiment results"
+    },
+    "datasets": {
+      "schema": "Dataset",
+      "description": "Collection of dataset metadata"
+    }
+  }
+}
